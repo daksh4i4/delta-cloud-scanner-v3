@@ -52,6 +52,10 @@ CANDLE_COUNT = max(
 
 ROOT = Path(__file__).resolve().parent
 
+print("ROOT:", ROOT)
+print("FRONTEND:", ROOT / "frontend")
+print("INDEX EXISTS:", (ROOT / "frontend" / "index.html").exists())
+
 
 # ============================================================
 # FASTAPI
