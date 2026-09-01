@@ -50,7 +50,7 @@ CANDLE_COUNT = max(
     int(os.getenv("CANDLE_COUNT", "120"))
 )
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 
 print("ROOT:", ROOT)
 print("FRONTEND:", ROOT / "frontend")
