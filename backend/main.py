@@ -42,7 +42,7 @@ BATCH_SIZE = max(
 )
 
 HTTP_TIMEOUT = float(
-    os.getenv("HTTP_TIMEOUT_SECONDS", "20")
+    os.getenv("HTTP_TIMEOUT_SECONDS", "15")
 )
 
 CANDLE_COUNT = max(
@@ -52,9 +52,14 @@ CANDLE_COUNT = max(
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+# ============================================================
+# FASTAPI
+# ============================================================
+
 app = FastAPI(
     title="Delta Cloud Scanner V3",
-    version="3.1"
+    version="3.2"
 )
 
 app.add_middleware(
@@ -152,13 +157,32 @@ telegram_client: httpx.AsyncClient | None = None
 
 last_error = ""
 
+scanner_task: asyncio.Task | None = None
+websocket_task: asyncio.Task | None = None
+
+
+# ============================================================
+# HTTP TIMEOUT
+# ============================================================
+
+def http_timeout():
+
+    return httpx.Timeout(
+        connect=5.0,
+        read=HTTP_TIMEOUT,
+        write=HTTP_TIMEOUT,
+        pool=5.0
+    )
+
 
 # ============================================================
 # HELPERS
 # ============================================================
 
 def num(v, default=0.0):
+
     try:
+
         if v is None:
             return default
 
@@ -170,11 +194,16 @@ def num(v, default=0.0):
         return default
 
     except Exception:
+
         return default
 
 
 def tf_seconds(tf):
-    return TIMEFRAMES.get(str(tf), 900)
+
+    return TIMEFRAMES.get(
+        str(tf),
+        900
+    )
 
 
 # ============================================================
@@ -185,6 +214,7 @@ def ema_series(values, period):
 
     try:
         p = int(period)
+
     except Exception:
         return []
 
@@ -213,7 +243,10 @@ def ema_series(values, period):
 
 def ema(values, period):
 
-    s = ema_series(values, period)
+    s = ema_series(
+        values,
+        period
+    )
 
     return s[-1] if s else None
 
@@ -222,6 +255,7 @@ def sma(values, period):
 
     try:
         p = int(period)
+
     except Exception:
         return None
 
@@ -235,6 +269,7 @@ def rsi(values, period):
 
     try:
         p = int(period)
+
     except Exception:
         return 50.0
 
@@ -268,21 +303,32 @@ def rsi(values, period):
 
     if al == 0:
 
-        return 100.0 if ag else 50.0
+        return (
+            100.0
+            if ag
+            else 50.0
+        )
 
     rs = ag / al
 
     return 100 - 100 / (1 + rs)
 
 
-def macd(values, fast, slow, signal):
+def macd(
+    values,
+    fast,
+    slow,
+    signal
+):
 
     try:
+
         f = int(fast)
         s = int(slow)
         sig = int(signal)
 
     except Exception:
+
         return 0.0, 0.0
 
     if min(f, s, sig) <= 0:
@@ -291,8 +337,15 @@ def macd(values, fast, slow, signal):
     if len(values) < s + sig:
         return 0.0, 0.0
 
-    fs = ema_series(values, f)
-    ss = ema_series(values, s)
+    fs = ema_series(
+        values,
+        f
+    )
+
+    ss = ema_series(
+        values,
+        s
+    )
 
     mv = []
 
@@ -302,16 +355,25 @@ def macd(values, fast, slow, signal):
             fs[i] is not None
             and ss[i] is not None
         ):
-            mv.append(fs[i] - ss[i])
+
+            mv.append(
+                fs[i] - ss[i]
+            )
 
     if len(mv) < sig:
         return 0.0, 0.0
 
     ml = mv[-1]
 
-    sl = ema(mv, sig)
+    sl = ema(
+        mv,
+        sig
+    )
 
-    return ml, sl if sl is not None else 0.0
+    return (
+        ml,
+        sl if sl is not None else 0.0
+    )
 
 
 def stochastic(
@@ -324,11 +386,13 @@ def stochastic(
 ):
 
     try:
+
         p = int(period)
         ks = int(k_smooth)
         ds = int(d_smooth)
 
     except Exception:
+
         return 50.0, 50.0
 
     if min(p, ks, ds) <= 0:
@@ -345,16 +409,25 @@ def stochastic(
     ):
 
         hi = max(
-            highs[i - p + 1:i + 1]
+            highs[
+                i - p + 1:
+                i + 1
+            ]
         )
 
         lo = min(
-            lows[i - p + 1:i + 1]
+            lows[
+                i - p + 1:
+                i + 1
+            ]
         )
 
         if hi == lo:
+
             value = 50.0
+
         else:
+
             value = (
                 (closes[i] - lo)
                 / (hi - lo)
@@ -372,7 +445,10 @@ def stochastic(
 
         kv.append(
             sum(
-                raw[i - ks + 1:i + 1]
+                raw[
+                    i - ks + 1:
+                    i + 1
+                ]
             ) / ks
         )
 
@@ -382,8 +458,13 @@ def stochastic(
     k = kv[-1]
 
     if len(kv) >= ds:
-        d = sum(kv[-ds:]) / ds
+
+        d = sum(
+            kv[-ds:]
+        ) / ds
+
     else:
+
         d = k
 
     return k, d
@@ -405,7 +486,8 @@ def heikin_ashi(candles):
 
     for c in sorted(
         candles,
-        key=lambda x: num(x.get("time"))
+        key=lambda x:
+            num(x.get("time"))
     ):
 
         o = num(c.get("open"))
@@ -418,14 +500,29 @@ def heikin_ashi(candles):
         ) / 4
 
         if ha_open is None:
-            ho = (o + cl) / 2
-        else:
+
             ho = (
-                ha_open + ha_close
+                o + cl
             ) / 2
 
-        hh = max(h, ho, hc)
-        hl = min(l, ho, hc)
+        else:
+
+            ho = (
+                ha_open
+                + ha_close
+            ) / 2
+
+        hh = max(
+            h,
+            ho,
+            hc
+        )
+
+        hl = min(
+            l,
+            ho,
+            hc
+        )
 
         out.append({
             "open": ho,
@@ -451,10 +548,12 @@ def pivot_levels(
 ):
 
     try:
+
         lb = int(lookback)
         p = int(pivot)
 
     except Exception:
+
         return []
 
     data = (
@@ -485,14 +584,16 @@ def pivot_levels(
         low_window = [
             num(x.get("low"))
             for x in data[
-                i - p:i + p + 1
+                i - p:
+                i + p + 1
             ]
         ]
 
         high_window = [
             num(x.get("high"))
             for x in data[
-                i - p:i + p + 1
+                i - p:
+                i + p + 1
             ]
         ]
 
@@ -505,7 +606,10 @@ def pivot_levels(
     return lows, highs
 
 
-def sr_levels(candles, price):
+def sr_levels(
+    candles,
+    price
+):
 
     piv = pivot_levels(
         candles,
@@ -526,7 +630,8 @@ def sr_levels(candles, price):
 
     supports = sorted(
         {
-            x for x in lows
+            x
+            for x in lows
             if x < price
         },
         reverse=True
@@ -534,27 +639,33 @@ def sr_levels(candles, price):
 
     resistances = sorted(
         {
-            x for x in highs
+            x
+            for x in highs
             if x > price
         }
     )
 
     return {
-        "s1": supports[0]
-        if len(supports) > 0
-        else None,
 
-        "s2": supports[1]
-        if len(supports) > 1
-        else None,
+        "s1":
+            supports[0]
+            if len(supports) > 0
+            else None,
 
-        "r1": resistances[0]
-        if len(resistances) > 0
-        else None,
+        "s2":
+            supports[1]
+            if len(supports) > 1
+            else None,
 
-        "r2": resistances[1]
-        if len(resistances) > 1
-        else None,
+        "r1":
+            resistances[0]
+            if len(resistances) > 0
+            else None,
+
+        "r2":
+            resistances[1]
+            if len(resistances) > 1
+            else None,
     }
 
 
@@ -564,12 +675,17 @@ def sr_levels(candles, price):
 
 def analyze(candles):
 
-    if not candles or len(candles) < 40:
+    if (
+        not candles
+        or len(candles) < 40
+    ):
+
         return None
 
     candles = sorted(
         candles,
-        key=lambda x: num(x.get("time"))
+        key=lambda x:
+            num(x.get("time"))
     )
 
     closes = [
@@ -598,9 +714,20 @@ def analyze(candles):
 
     we = settings["wave_ema"]
 
-    e1 = ema(closes, we[0])
-    e2 = ema(closes, we[1])
-    e3 = ema(closes, we[2])
+    e1 = ema(
+        closes,
+        we[0]
+    )
+
+    e2 = ema(
+        closes,
+        we[1]
+    )
+
+    e3 = ema(
+        closes,
+        we[2]
+    )
 
     ml, ms = macd(
         closes,
@@ -619,29 +746,38 @@ def analyze(candles):
     )
 
     return {
+
         "ema5": e1,
+
         "ema13": e2,
+
         "ema26": e3,
 
-        "rsi": rsi(
-            closes,
-            settings["rsi_period"]
-        ),
+        "rsi":
+            rsi(
+                closes,
+                settings["rsi_period"]
+            ),
 
         "macd": ml,
+
         "macd_signal": ms,
 
         "stoch_k": sk,
+
         "stoch_d": sd,
 
-        "volume": volumes[-1],
+        "volume":
+            volumes[-1],
 
-        "volume_sma": sma(
-            volumes,
-            settings["volume_sma"]
-        ),
+        "volume_sma":
+            sma(
+                volumes,
+                settings["volume_sma"]
+            ),
 
-        "close": closes[-1],
+        "close":
+            closes[-1],
     }
 
 
@@ -649,31 +785,63 @@ def analyze(candles):
 # HTTP
 # ============================================================
 
-async def get_json(path, params=None):
+async def get_json(
+    path,
+    params=None
+):
 
     global http_client
 
     if http_client is None:
 
         http_client = httpx.AsyncClient(
-            timeout=HTTP_TIMEOUT,
+            timeout=http_timeout(),
             limits=httpx.Limits(
                 max_connections=12,
                 max_keepalive_connections=6
             )
         )
 
-    r = await http_client.get(
-        BASE + path,
-        params=params,
-        headers={
-            "Accept": "application/json"
-        }
+    last_exc = None
+
+    for attempt in range(3):
+
+        try:
+
+            r = await http_client.get(
+                BASE + path,
+                params=params,
+                headers={
+                    "Accept":
+                        "application/json"
+                }
+            )
+
+            r.raise_for_status()
+
+            return r.json()
+
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError
+        ) as exc:
+
+            last_exc = exc
+
+            if attempt < 2:
+
+                await asyncio.sleep(
+                    0.5 * (attempt + 1)
+                )
+
+        except Exception:
+
+            raise
+
+    raise last_exc or RuntimeError(
+        "HTTP request failed"
     )
-
-    r.raise_for_status()
-
-    return r.json()
 
 
 # ============================================================
@@ -686,7 +854,9 @@ async def candles(
     count=CANDLE_COUNT
 ):
 
-    end = int(time.time())
+    end = int(
+        time.time()
+    )
 
     start = (
         end
@@ -697,23 +867,37 @@ async def candles(
     data = await get_json(
         "/v2/history/candles",
         {
-            "resolution": timeframe,
-            "symbol": symbol,
-            "start": start,
-            "end": end,
+            "resolution":
+                timeframe,
+
+            "symbol":
+                symbol,
+
+            "start":
+                start,
+
+            "end":
+                end,
         }
     )
 
-    result = data.get("result", [])
+    result = data.get(
+        "result",
+        []
+    )
 
-    if not isinstance(result, list):
+    if not isinstance(
+        result,
+        list
+    ):
+
         return []
 
     return result
 
 
 # ============================================================
-# LOAD MARKETS - ROBUST VERSION
+# LOAD MARKETS
 # ============================================================
 
 async def load_markets():
@@ -721,35 +905,42 @@ async def load_markets():
     global markets
     global last_error
 
-    print("Loading Delta perpetual markets...")
+    print(
+        "Loading Delta perpetual markets..."
+    )
 
     try:
-
-        # IMPORTANT:
-        # Request ALL tickers and filter perpetuals locally.
-        # This avoids depending on contract_types filtering.
 
         data = await get_json(
             "/v2/tickers"
         )
 
-        if not isinstance(data, dict):
+        if not isinstance(
+            data,
+            dict
+        ):
 
             raise RuntimeError(
                 f"Invalid ticker response: {data}"
             )
 
-        result = data.get("result") or []
+        result = (
+            data.get("result")
+            or []
+        )
 
-        if not isinstance(result, list):
+        if not isinstance(
+            result,
+            list
+        ):
 
             raise RuntimeError(
-                f"Ticker result is not a list: "
-                f"{type(result)}"
+                "Ticker result is not a list"
             )
 
         print(
-            f"Delta returned {len(result)} ticker records."
+            f"Delta returned "
+            f"{len(result)} ticker records."
         )
 
         old_markets = markets
@@ -758,7 +949,11 @@ async def load_markets():
 
         for t in result:
 
-            if not isinstance(t, dict):
+            if not isinstance(
+                t,
+                dict
+            ):
+
                 continue
 
             contract_type = str(
@@ -775,19 +970,24 @@ async def load_markets():
             if not symbol:
                 continue
 
-            # Accept known perpetual contracts.
             if (
                 contract_type
-                and contract_type != "perpetual_futures"
+                and contract_type
+                != "perpetual_futures"
             ):
+
                 continue
 
-            # Additional safety filter.
-            # Options normally begin with C-/P-.
-            if symbol.startswith("C-"):
+            if symbol.startswith(
+                "C-"
+            ):
+
                 continue
 
-            if symbol.startswith("P-"):
+            if symbol.startswith(
+                "P-"
+            ):
+
                 continue
 
             old = old_markets.get(
@@ -826,26 +1026,34 @@ async def load_markets():
 
             new[symbol] = {
 
-                "symbol": symbol,
+                "symbol":
+                    symbol,
 
-                "price": price,
+                "price":
+                    price,
 
-                "change": change,
+                "change":
+                    change,
 
-                "volume": volume,
+                "volume":
+                    volume,
 
-                "oi": oi,
+                "oi":
+                    oi,
 
                 "indicators":
-                    old.get("indicators"),
+                    old.get(
+                        "indicators"
+                    ),
 
                 "live_volume":
-                    old.get("live_volume"),
+                    old.get(
+                        "live_volume"
+                    ),
             }
 
         if not new:
 
-            # Diagnostic information.
             sample = result[:3]
 
             print(
@@ -881,7 +1089,8 @@ async def load_markets():
     except Exception as e:
 
         last_error = (
-            f"load_markets: {type(e).__name__}: {e}"
+            f"load_markets: "
+            f"{type(e).__name__}: {e}"
         )
 
         print(
@@ -891,8 +1100,6 @@ async def load_markets():
 
         traceback.print_exc()
 
-        # Do NOT destroy the last good snapshot.
-
 
 # ============================================================
 # TELEGRAM
@@ -901,6 +1108,7 @@ async def load_markets():
 async def telegram(message):
 
     if not TG or not CHAT:
+
         return
 
     global telegram_client
@@ -910,7 +1118,8 @@ async def telegram(message):
         telegram_client = httpx.AsyncClient(
             timeout=10,
             limits=httpx.Limits(
-                max_connections=2
+                max_connections=2,
+                max_keepalive_connections=2
             )
         )
 
@@ -919,10 +1128,17 @@ async def telegram(message):
         r = await telegram_client.post(
             f"https://api.telegram.org/bot{TG}/sendMessage",
             json={
-                "chat_id": CHAT,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
+                "chat_id":
+                    CHAT,
+
+                "text":
+                    message,
+
+                "parse_mode":
+                    "HTML",
+
+                "disable_web_page_preview":
+                    True,
             }
         )
 
@@ -957,6 +1173,7 @@ def near(
         or b is None
         or b == 0
     ):
+
         return False
 
     return (
@@ -997,14 +1214,20 @@ def trade_plan(
         ]
 
         if supports:
-            sl_base = max(supports)
+
+            sl_base = max(
+                supports
+            )
+
         else:
+
             sl_base = (
                 price
                 * (
                     1
-                    - settings["sl_buffer_pct"]
-                    / 100
+                    - settings[
+                        "sl_buffer_pct"
+                    ] / 100
                 )
             )
 
@@ -1012,20 +1235,27 @@ def trade_plan(
             sl_base
             * (
                 1
-                - settings["sl_buffer_pct"]
-                / 100
+                - settings[
+                    "sl_buffer_pct"
+                ] / 100
             )
         )
 
         risk = price - sl
 
         if risk <= 0:
+
             return {
-                "entry": price,
-                "sl": None,
-                "tp1": None,
-                "tp2": None,
-                "rr": 0,
+                "entry":
+                    price,
+                "sl":
+                    None,
+                "tp1":
+                    None,
+                "tp2":
+                    None,
+                "rr":
+                    0,
             }
 
         if resistances:
@@ -1034,8 +1264,6 @@ def trade_plan(
                 resistances
             )
 
-            # If far target creates reasonable RR,
-            # use it.
             rr = (
                 target - price
             ) / risk
@@ -1048,20 +1276,35 @@ def trade_plan(
                 * settings["min_rr"]
             )
 
-            rr = settings["min_rr"]
+            rr = settings[
+                "min_rr"
+            ]
 
-        # TP1 = 1R
-        tp1 = price + risk
+        tp1 = (
+            price + risk
+        )
 
         return {
-            "entry": price,
-            "sl": sl,
-            "tp1": tp1,
-            "tp2": target,
-            "rr": rr,
+
+            "entry":
+                price,
+
+            "sl":
+                sl,
+
+            "tp1":
+                tp1,
+
+            "tp2":
+                target,
+
+            "rr":
+                rr,
         }
 
+    # ========================================================
     # SELL
+    # ========================================================
 
     supports = [
         x
@@ -1084,14 +1327,20 @@ def trade_plan(
     ]
 
     if resistances:
-        sl_base = min(resistances)
+
+        sl_base = min(
+            resistances
+        )
+
     else:
+
         sl_base = (
             price
             * (
                 1
-                + settings["sl_buffer_pct"]
-                / 100
+                + settings[
+                    "sl_buffer_pct"
+                ] / 100
             )
         )
 
@@ -1099,20 +1348,27 @@ def trade_plan(
         sl_base
         * (
             1
-            + settings["sl_buffer_pct"]
-            / 100
+            + settings[
+                "sl_buffer_pct"
+            ] / 100
         )
     )
 
     risk = sl - price
 
     if risk <= 0:
+
         return {
-            "entry": price,
-            "sl": None,
-            "tp1": None,
-            "tp2": None,
-            "rr": 0,
+            "entry":
+                price,
+            "sl":
+                None,
+            "tp1":
+                None,
+            "tp2":
+                None,
+            "rr":
+                0,
         }
 
     if supports:
@@ -1133,17 +1389,30 @@ def trade_plan(
             * settings["min_rr"]
         )
 
-        rr = settings["min_rr"]
+        rr = settings[
+            "min_rr"
+        ]
 
-    # TP1 = 1R
-    tp1 = price - risk
+    tp1 = (
+        price - risk
+    )
 
     return {
-        "entry": price,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": target,
-        "rr": rr,
+
+        "entry":
+            price,
+
+        "sl":
+            sl,
+
+        "tp1":
+            tp1,
+
+        "tp2":
+            target,
+
+        "rr":
+            rr,
     }
 
 
@@ -1151,22 +1420,43 @@ def trade_plan(
 # SYMBOL ANALYSIS
 # ============================================================
 
-async def analyze_symbol(symbol):
+async def analyze_symbol(
+    symbol
+):
 
     try:
 
-        wave_tf = settings["wave_tf"]
-        tide_tf = settings["tide_tf"]
+        wave_tf = settings[
+            "wave_tf"
+        ]
+
+        tide_tf = settings[
+            "tide_tf"
+        ]
 
         wc, tc = await asyncio.gather(
-            candles(symbol, wave_tf),
-            candles(symbol, tide_tf)
+
+            candles(
+                symbol,
+                wave_tf
+            ),
+
+            candles(
+                symbol,
+                tide_tf
+            )
         )
 
-        wave = analyze(wc)
-        tide = analyze(tc)
+        wave = analyze(
+            wc
+        )
+
+        tide = analyze(
+            tc
+        )
 
         if not wave or not tide:
+
             return None
 
         price = (
@@ -1181,7 +1471,9 @@ async def analyze_symbol(symbol):
             price
         )
 
-        ha = heikin_ashi(tc)
+        ha = heikin_ashi(
+            tc
+        )
 
         ha_last = (
             ha[-1]
@@ -1196,145 +1488,319 @@ async def analyze_symbol(symbol):
         )
 
         ha_bull = (
-            ha_last.get("close", 0)
-            > ha_last.get("open", 0)
+
+            ha_last.get(
+                "close",
+                0
+            )
+            >
+            ha_last.get(
+                "open",
+                0
+            )
+
             and
-            ha_last.get("close", 0)
-            >= ha_prev.get("close", 0)
+
+            ha_last.get(
+                "close",
+                0
+            )
+            >=
+            ha_prev.get(
+                "close",
+                0
+            )
         )
 
         ha_bear = (
-            ha_last.get("close", 0)
-            < ha_last.get("open", 0)
+
+            ha_last.get(
+                "close",
+                0
+            )
+            <
+            ha_last.get(
+                "open",
+                0
+            )
+
             and
-            ha_last.get("close", 0)
-            <= ha_prev.get("close", 0)
+
+            ha_last.get(
+                "close",
+                0
+            )
+            <=
+            ha_prev.get(
+                "close",
+                0
+            )
         )
 
         tfc = [
-            num(x.get("close"))
+            num(
+                x.get("close")
+            )
             for x in tc
         ]
 
         f1 = ema(
             tfc,
-            settings["tide_filter_ema"][0]
+            settings[
+                "tide_filter_ema"
+            ][0]
         )
 
         f2 = ema(
             tfc,
-            settings["tide_filter_ema"][1]
+            settings[
+                "tide_filter_ema"
+            ][1]
         )
 
         wave_bull = (
+
             wave["ema5"]
-            > wave["ema13"]
-            > wave["ema26"]
+            is not None
+
+            and
+
+            wave["ema13"]
+            is not None
+
+            and
+
+            wave["ema26"]
+            is not None
+
+            and
+
+            wave["ema5"]
+            >
+            wave["ema13"]
+            >
+            wave["ema26"]
         )
 
         wave_bear = (
+
             wave["ema5"]
-            < wave["ema13"]
-            < wave["ema26"]
+            is not None
+
+            and
+
+            wave["ema13"]
+            is not None
+
+            and
+
+            wave["ema26"]
+            is not None
+
+            and
+
+            wave["ema5"]
+            <
+            wave["ema13"]
+            <
+            wave["ema26"]
         )
 
         tide_bull = (
+
             tide["ema5"]
-            > tide["ema13"]
-            > tide["ema26"]
-            and f1 is not None
-            and f2 is not None
-            and f1 > f2
+            is not None
+
+            and
+
+            tide["ema13"]
+            is not None
+
+            and
+
+            tide["ema26"]
+            is not None
+
+            and
+
+            tide["ema5"]
+            >
+            tide["ema13"]
+            >
+            tide["ema26"]
+
+            and
+
+            f1 is not None
+
+            and
+
+            f2 is not None
+
+            and
+
+            f1 > f2
         )
 
         tide_bear = (
+
             tide["ema5"]
-            < tide["ema13"]
-            < tide["ema26"]
-            and f1 is not None
-            and f2 is not None
-            and f1 < f2
+            is not None
+
+            and
+
+            tide["ema13"]
+            is not None
+
+            and
+
+            tide["ema26"]
+            is not None
+
+            and
+
+            tide["ema5"]
+            <
+            tide["ema13"]
+            <
+            tide["ema26"]
+
+            and
+
+            f1 is not None
+
+            and
+
+            f2 is not None
+
+            and
+
+            f1 < f2
         )
 
         macd_bull = (
             wave["macd"]
-            > wave["macd_signal"]
+            >
+            wave["macd_signal"]
         )
 
         macd_bear = (
             wave["macd"]
-            < wave["macd_signal"]
+            <
+            wave["macd_signal"]
         )
 
         stoch_bull = (
             wave["stoch_k"]
-            > wave["stoch_d"]
+            >
+            wave["stoch_d"]
         )
 
         stoch_bear = (
             wave["stoch_k"]
-            < wave["stoch_d"]
+            <
+            wave["stoch_d"]
         )
 
         if wave["volume_sma"]:
+
             volume_ratio = (
                 wave["volume"]
-                / wave["volume_sma"]
+                /
+                wave["volume_sma"]
             )
+
         else:
+
             volume_ratio = 0
 
         vol_ok = (
             volume_ratio
-            >= settings["min_volume_ratio"]
+            >=
+            settings[
+                "min_volume_ratio"
+            ]
         )
 
-        # S/R confirmation
         buy_sr = (
+
             (
                 sr["s1"] is not None
                 and price > sr["s1"]
             )
+
             or
+
             (
                 sr["r1"] is not None
-                and near(price, sr["r1"])
+                and near(
+                    price,
+                    sr["r1"]
+                )
             )
         )
 
         sell_sr = (
+
             (
                 sr["r1"] is not None
                 and price < sr["r1"]
             )
+
             or
+
             (
                 sr["s1"] is not None
-                and near(price, sr["s1"])
+                and near(
+                    price,
+                    sr["s1"]
+                )
             )
         )
 
         buy_checks = [
+
             wave_bull,
+
             tide_bull,
+
             ha_bull,
+
             wave["rsi"]
-            > settings["rsi_buy"],
+            >
+            settings[
+                "rsi_buy"
+            ],
+
             macd_bull,
+
             stoch_bull,
+
             vol_ok,
+
             buy_sr,
         ]
 
         sell_checks = [
+
             wave_bear,
+
             tide_bear,
+
             ha_bear,
+
             wave["rsi"]
-            < settings["rsi_sell"],
+            <
+            settings[
+                "rsi_sell"
+            ],
+
             macd_bear,
+
             stoch_bear,
+
             vol_ok,
+
             sell_sr,
         ]
 
@@ -1377,10 +1843,19 @@ async def analyze_symbol(symbol):
         score += (
             8
             if wave["rsi"]
-            > settings["rsi_buy"]
+            >
+            settings[
+                "rsi_buy"
+            ]
+
             else -8
+
             if wave["rsi"]
-            < settings["rsi_sell"]
+            <
+            settings[
+                "rsi_sell"
+            ]
+
             else 0
         )
 
@@ -1407,10 +1882,18 @@ async def analyze_symbol(symbol):
         )
 
         score += (
+
             5
-            if buy_sr and score >= 50
+
+            if (
+                buy_sr
+                and score >= 50
+            )
+
             else -5
+
             if sell_sr
+
             else 0
         )
 
@@ -1439,62 +1922,103 @@ async def analyze_symbol(symbol):
         )
 
         buy_ok = (
+
             buy_conf
-            >= settings[
+            >=
+            settings[
                 "min_signal_confirmations"
             ]
+
             and
+
             score
-            >= settings["buy_score"]
+            >=
+            settings[
+                "buy_score"
+            ]
+
             and
+
             buy_plan["rr"]
-            >= settings["min_rr"]
+            >=
+            settings[
+                "min_rr"
+            ]
         )
 
         sell_ok = (
+
             sell_conf
-            >= settings[
+            >=
+            settings[
                 "min_signal_confirmations"
             ]
+
             and
+
             score
-            <= settings["sell_score"]
+            <=
+            settings[
+                "sell_score"
+            ]
+
             and
+
             sell_plan["rr"]
-            >= settings["min_rr"]
+            >=
+            settings[
+                "min_rr"
+            ]
         )
 
         if buy_ok:
+
             signal = "BUY"
+
         elif sell_ok:
+
             signal = "SELL"
+
         else:
+
             signal = "NEUTRAL"
 
         plan = (
+
             buy_plan
             if signal == "BUY"
+
             else sell_plan
             if signal == "SELL"
+
             else None
         )
 
         return {
 
-            "wave": wave,
+            "wave":
+                wave,
 
-            "tide": tide,
+            "tide":
+                tide,
 
-            "tide9": f1,
+            "tide9":
+                f1,
 
-            "tide20": f2,
+            "tide20":
+                f2,
 
             "ha": {
+
                 "open":
-                    ha_last.get("open"),
+                    ha_last.get(
+                        "open"
+                    ),
 
                 "close":
-                    ha_last.get("close"),
+                    ha_last.get(
+                        "close"
+                    ),
 
                 "bull":
                     ha_bull,
@@ -1503,9 +2027,11 @@ async def analyze_symbol(symbol):
                     ha_bear,
             },
 
-            "sr": sr,
+            "sr":
+                sr,
 
-            "score": score,
+            "score":
+                score,
 
             "buy_confirmations":
                 buy_conf,
@@ -1547,7 +2073,9 @@ async def analyze_symbol(symbol):
 # BATCH PROCESSING
 # ============================================================
 
-async def process_batch(symbols):
+async def process_batch(
+    symbols
+):
 
     results = {}
 
@@ -1558,14 +2086,19 @@ async def process_batch(symbols):
     ):
 
         batch = symbols[
-            i:i + BATCH_SIZE
+            i:
+            i + BATCH_SIZE
         ]
 
         vals = await asyncio.gather(
+
             *(
-                analyze_symbol(s)
+                analyze_symbol(
+                    s
+                )
                 for s in batch
             ),
+
             return_exceptions=True
         )
 
@@ -1587,9 +2120,13 @@ async def process_batch(symbols):
 
             elif result is not None:
 
-                results[symbol] = result
+                results[
+                    symbol
+                ] = result
 
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(
+            0.15
+        )
 
     return results
 
@@ -1603,7 +2140,13 @@ def fmt_price(x):
     if x is None:
         return "—"
 
-    x = float(x)
+    try:
+
+        x = float(x)
+
+    except Exception:
+
+        return "—"
 
     if x == 0:
         return "0"
@@ -1620,15 +2163,24 @@ async def send_signal(
     result
 ):
 
-    sig = result["signal"]
+    sig = result[
+        "signal"
+    ]
 
     if sig not in (
         "BUY",
         "SELL"
     ):
+
         return
 
-    if previous_signals.get(symbol) == sig:
+    if (
+        previous_signals.get(
+            symbol
+        )
+        == sig
+    ):
+
         return
 
     m = markets.get(
@@ -1636,11 +2188,17 @@ async def send_signal(
         {}
     )
 
-    w = result["wave"]
+    w = result[
+        "wave"
+    ]
 
-    p = result["plan"] or {}
+    p = result[
+        "plan"
+    ] or {}
 
-    sr = result["sr"]
+    sr = result[
+        "sr"
+    ]
 
     emoji = (
         "🟢"
@@ -1649,19 +2207,37 @@ async def send_signal(
     )
 
     confirmations = (
-        result["buy_confirmations"]
+
+        result[
+            "buy_confirmations"
+        ]
+
         if sig == "BUY"
-        else result["sell_confirmations"]
+
+        else result[
+            "sell_confirmations"
+        ]
     )
 
     ha_text = (
+
         "Bullish"
-        if result["ha"]["bull"]
-        else
-        "Bearish"
-        if result["ha"]["bear"]
-        else
-        "Neutral"
+
+        if result[
+            "ha"
+        ]["bull"]
+
+        else "Bearish"
+
+        if result[
+            "ha"
+        ]["bear"]
+
+        else "Neutral"
+    )
+
+    rr_value = num(
+        p.get("rr")
     )
 
     msg = (
@@ -1681,7 +2257,7 @@ async def send_signal(
         f"<b>{confirmations}/8</b>\n"
 
         f"⚖️ R:R: "
-        f"<b>1:{p.get('rr', 0):.2f}</b>\n\n"
+        f"<b>1:{rr_value:.2f}</b>\n\n"
 
         f"🌊 Wave: "
         f"<b>{settings['wave_tf']}</b>\n"
@@ -1731,7 +2307,9 @@ async def send_signal(
         f"{result['volume_ratio']:.2f}x"
     )
 
-    await telegram(msg)
+    await telegram(
+        msg
+    )
 
 
 # ============================================================
@@ -1796,15 +2374,21 @@ async def scan():
             1
         ):
 
-            results[symbol][
+            results[
+                symbol
+            ][
                 "score_rank"
             ] = rank
 
             if symbol in markets:
 
-                markets[symbol][
+                markets[
+                    symbol
+                ][
                     "indicators"
-                ] = results[symbol]
+                ] = results[
+                    symbol
+                ]
 
         for symbol, result in results.items():
 
@@ -1815,7 +2399,9 @@ async def scan():
 
             previous_signals[
                 symbol
-            ] = result["signal"]
+            ] = result[
+                "signal"
+            ]
 
         last_scan = time.time()
 
@@ -1878,7 +2464,13 @@ async def scan():
 
 async def scanner_loop():
 
-    await asyncio.sleep(3)
+    print(
+        "Scanner loop started."
+    )
+
+    await asyncio.sleep(
+        2
+    )
 
     while True:
 
@@ -1888,11 +2480,15 @@ async def scanner_loop():
 
             await scan()
 
+        except asyncio.CancelledError:
+
+            raise
+
         except Exception as e:
 
             print(
                 "SCANNER LOOP:",
-                e
+                repr(e)
             )
 
         elapsed = (
@@ -1918,6 +2514,10 @@ async def websocket_loop():
     global last_ws_broadcast
     global last_error
 
+    print(
+        "Delta WebSocket loop started."
+    )
+
     while True:
 
         try:
@@ -1930,7 +2530,9 @@ async def websocket_loop():
 
             if not symbols:
 
-                await asyncio.sleep(2)
+                await asyncio.sleep(
+                    2
+                )
 
                 continue
 
@@ -1941,10 +2543,15 @@ async def websocket_loop():
             )
 
             async with websockets.connect(
+
                 WS_URL,
+
                 ping_interval=20,
+
                 ping_timeout=20,
+
                 close_timeout=5,
+
                 max_size=4_000_000,
             ) as ws:
 
@@ -1954,8 +2561,6 @@ async def websocket_loop():
                     "Delta public WebSocket connected."
                 )
 
-                # Subscribe max 100 symbols
-                # per subscription.
                 for start in range(
                     0,
                     len(symbols),
@@ -1963,16 +2568,21 @@ async def websocket_loop():
                 ):
 
                     chunk = symbols[
-                        start:start + 100
+                        start:
+                        start + 100
                     ]
 
                     payload = {
+
                         "type":
                             "subscribe",
 
                         "payload": {
+
                             "channels": [
+
                                 {
+
                                     "name":
                                         "ticker",
 
@@ -1984,7 +2594,9 @@ async def websocket_loop():
                     }
 
                     await ws.send(
-                        json.dumps(payload)
+                        json.dumps(
+                            payload
+                        )
                     )
 
                     await asyncio.sleep(
@@ -2009,40 +2621,49 @@ async def websocket_loop():
                             message,
                             dict
                         ):
+
                             continue
 
                         message_type = (
-                            message.get("type")
+                            message.get(
+                                "type"
+                            )
                         )
 
                         if message_type in {
+
                             "heartbeat",
+
                             "subscriptions",
+
                             "pong",
                         }:
-                            continue
 
-                        # ====================================================
-                        # IMPORTANT:
-                        # New Delta ticker messages can contain:
-                        # {
-                        #   "type":"ticker",
-                        #   "d":[{...}]
-                        # }
-                        #
-                        # Older/alternate messages may contain:
-                        # data/result/object.
-                        # ====================================================
+                            continue
 
                         records = []
 
-                        d = message.get("d")
+                        d = message.get(
+                            "d"
+                        )
 
-                        if isinstance(d, list):
-                            records.extend(d)
+                        if isinstance(
+                            d,
+                            list
+                        ):
 
-                        elif isinstance(d, dict):
-                            records.append(d)
+                            records.extend(
+                                d
+                            )
+
+                        elif isinstance(
+                            d,
+                            dict
+                        ):
+
+                            records.append(
+                                d
+                            )
 
                         data = message.get(
                             "data"
@@ -2052,13 +2673,19 @@ async def websocket_loop():
                             data,
                             list
                         ):
-                            records.extend(data)
+
+                            records.extend(
+                                data
+                            )
 
                         elif isinstance(
                             data,
                             dict
                         ):
-                            records.append(data)
+
+                            records.append(
+                                data
+                            )
 
                         result = message.get(
                             "result"
@@ -2068,19 +2695,26 @@ async def websocket_loop():
                             result,
                             list
                         ):
-                            records.extend(result)
+
+                            records.extend(
+                                result
+                            )
 
                         elif isinstance(
                             result,
                             dict
                         ):
-                            records.append(result)
 
-                        # If the message itself is ticker-like.
+                            records.append(
+                                result
+                            )
+
                         if (
                             message.get("sy")
-                            or message.get("symbol")
+                            or
+                            message.get("symbol")
                         ):
+
                             records.append(
                                 message
                             )
@@ -2091,40 +2725,55 @@ async def websocket_loop():
                                 data,
                                 dict
                             ):
+
                                 continue
 
                             symbol = str(
+
                                 data.get("sy")
-                                or data.get("s")
-                                or data.get("symbol")
-                                or ""
+                                or
+                                data.get("s")
+                                or
+                                data.get("symbol")
+                                or
+                                ""
                             )
 
                             if symbol.startswith(
                                 "MARK:"
                             ):
-                                symbol = symbol[
-                                    5:
-                                ]
+
+                                symbol = (
+                                    symbol[5:]
+                                )
 
                             if symbol not in markets:
+
                                 continue
 
-                            # New ticker price
                             price = (
+
                                 data.get("p")
-                                or data.get("close")
-                                or data.get("c")
-                                or data.get("mark_price")
-                                or data.get("spot_price")
+                                or
+                                data.get("close")
+                                or
+                                data.get("c")
+                                or
+                                data.get("mark_price")
+                                or
+                                data.get("spot_price")
                             )
 
                             if price is not None:
 
                                 markets[
                                     symbol
-                                ]["price"] = num(
+                                ][
+                                    "price"
+                                ] = num(
+
                                     price,
+
                                     markets[
                                         symbol
                                     ].get(
@@ -2133,12 +2782,15 @@ async def websocket_loop():
                                     )
                                 )
 
-                            # 24h change
                             change = (
+
                                 data.get(
                                     "ltp_change_24h"
                                 )
-                                or data.get(
+
+                                or
+
+                                data.get(
                                     "price_change_24h"
                                 )
                             )
@@ -2147,17 +2799,25 @@ async def websocket_loop():
 
                                 markets[
                                     symbol
-                                ]["change"] = num(
+                                ][
+                                    "change"
+                                ] = num(
                                     change
                                 )
 
-                            # Live volume
                             volume = (
+
                                 data.get("v")
-                                or data.get(
+
+                                or
+
+                                data.get(
                                     "turnover"
                                 )
-                                or data.get(
+
+                                or
+
+                                data.get(
                                     "turnover_usd"
                                 )
                             )
@@ -2188,7 +2848,7 @@ async def websocket_loop():
 
                         print(
                             "WS PARSE ERROR:",
-                            exc
+                            repr(exc)
                         )
 
                         continue
@@ -2212,7 +2872,9 @@ async def websocket_loop():
                 repr(exc)
             )
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(
+                5
+            )
 
 
 # ============================================================
@@ -2227,7 +2889,10 @@ def snapshot():
 
     rows.sort(
         key=lambda x:
-            x.get("volume", 0),
+            x.get(
+                "volume",
+                0
+            ),
         reverse=True
     )
 
@@ -2236,7 +2901,9 @@ def snapshot():
         1
     ):
 
-        m["volume_rank"] = i
+        m[
+            "volume_rank"
+        ] = i
 
     return {
 
@@ -2273,16 +2940,33 @@ def snapshot():
 async def broadcast():
 
     if not clients:
+
         return
 
-    msg = json.dumps(
-        snapshot(),
-        separators=(",", ":")
-    )
+    try:
+
+        msg = json.dumps(
+            snapshot(),
+            separators=(
+                ",",
+                ":"
+            )
+        )
+
+    except Exception as exc:
+
+        print(
+            "SNAPSHOT ERROR:",
+            exc
+        )
+
+        return
 
     dead = []
 
-    for c in list(clients):
+    for c in list(
+        clients
+    ):
 
         try:
 
@@ -2292,11 +2976,55 @@ async def broadcast():
 
         except Exception:
 
-            dead.append(c)
+            dead.append(
+                c
+            )
 
     for c in dead:
 
-        clients.discard(c)
+        clients.discard(
+            c
+        )
+
+
+# ============================================================
+# RENDER-SAFE BACKGROUND START
+# ============================================================
+
+async def delayed_background_start():
+
+    global scanner_task
+    global websocket_task
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Allow Uvicorn/Render to bind the port FIRST.
+    # --------------------------------------------------------
+
+    print(
+        "Waiting 3 seconds before "
+        "starting Delta background workers..."
+    )
+
+    await asyncio.sleep(
+        3
+    )
+
+    print(
+        "Starting Delta scanner workers..."
+    )
+
+    scanner_task = asyncio.create_task(
+        scanner_loop()
+    )
+
+    websocket_task = asyncio.create_task(
+        websocket_loop()
+    )
+
+    print(
+        "Delta scanner workers started."
+    )
 
 
 # ============================================================
@@ -2308,24 +3036,50 @@ async def startup():
 
     global http_client
 
+    print(
+        "========================================"
+    )
+
+    print(
+        "Delta Cloud Scanner V3.2 starting..."
+    )
+
+    print(
+        "========================================"
+    )
+
+    # --------------------------------------------------------
+    # Create HTTP client only.
+    # Do NOT perform Delta API requests here.
+    # --------------------------------------------------------
+
     http_client = httpx.AsyncClient(
-        timeout=HTTP_TIMEOUT,
+
+        timeout=http_timeout(),
+
         limits=httpx.Limits(
+
             max_connections=12,
+
             max_keepalive_connections=6
         )
     )
 
-    asyncio.create_task(
-        scanner_loop()
-    )
+    # --------------------------------------------------------
+    # Start workers in background.
+    # FastAPI can finish startup immediately.
+    # --------------------------------------------------------
 
     asyncio.create_task(
-        websocket_loop()
+        delayed_background_start()
     )
 
     print(
-        "Delta Cloud Scanner V3.1 started."
+        "FastAPI startup complete."
+    )
+
+    print(
+        "Server is ready to accept connections."
     )
 
 
@@ -2339,17 +3093,58 @@ async def shutdown():
     global http_client
     global telegram_client
 
+    print(
+        "Shutting down Delta Cloud Scanner..."
+    )
+
+    # --------------------------------------------------------
+    # Cancel background workers.
+    # --------------------------------------------------------
+
+    for task in (
+        scanner_task,
+        websocket_task,
+    ):
+
+        if task is not None:
+
+            task.cancel()
+
+    # --------------------------------------------------------
+    # Close HTTP client.
+    # --------------------------------------------------------
+
     if http_client:
 
-        await http_client.aclose()
+        try:
+
+            await http_client.aclose()
+
+        except Exception:
+
+            pass
 
         http_client = None
 
+    # --------------------------------------------------------
+    # Close Telegram client.
+    # --------------------------------------------------------
+
     if telegram_client:
 
-        await telegram_client.aclose()
+        try:
+
+            await telegram_client.aclose()
+
+        except Exception:
+
+            pass
 
         telegram_client = None
+
+    print(
+        "Shutdown complete."
+    )
 
 
 # ============================================================
@@ -2359,11 +3154,25 @@ async def shutdown():
 @app.get("/")
 async def root():
 
-    return FileResponse(
+    index = (
         ROOT
         / "frontend"
         / "index.html"
     )
+
+    if index.exists():
+
+        return FileResponse(
+            index
+        )
+
+    return {
+        "ok": True,
+        "service":
+            "Delta Cloud Scanner V3.2",
+        "message":
+            "Backend is running."
+    }
 
 
 @app.head("/")
@@ -2372,12 +3181,36 @@ async def root_head():
     return None
 
 
+# ============================================================
+# SIMPLE RENDER HEALTH / PING
+# ============================================================
+
+@app.get("/api/ping")
+async def ping():
+
+    return {
+
+        "ok":
+            True,
+
+        "service":
+            "Delta Cloud Scanner V3.2",
+
+        "message":
+            "Server is running",
+
+        "timestamp":
+            time.time(),
+    }
+
+
 @app.get("/api/health")
 async def health():
 
     return {
 
-        "ok": True,
+        "ok":
+            True,
 
         "ws_connected":
             ws_ok,
@@ -2413,44 +3246,68 @@ async def update_settings(
 
     global settings
 
+    # --------------------------------------------------------
+    # Timeframes
+    # --------------------------------------------------------
+
     if (
-        new_settings.get("wave_tf")
+        new_settings.get(
+            "wave_tf"
+        )
         in TIMEFRAMES
     ):
 
-        settings["wave_tf"] = (
-            new_settings["wave_tf"]
-        )
+        settings[
+            "wave_tf"
+        ] = new_settings[
+            "wave_tf"
+        ]
 
     if (
-        new_settings.get("tide_tf")
+        new_settings.get(
+            "tide_tf"
+        )
         in TIMEFRAMES
     ):
 
-        settings["tide_tf"] = (
-            new_settings["tide_tf"]
-        )
+        settings[
+            "tide_tf"
+        ] = new_settings[
+            "tide_tf"
+        ]
+
+    # --------------------------------------------------------
+    # Numeric settings
+    # --------------------------------------------------------
 
     numeric = [
 
         "rsi_period",
+
         "rsi_buy",
+
         "rsi_sell",
 
         "macd_fast",
+
         "macd_slow",
+
         "macd_signal",
 
         "stoch_period",
+
         "stoch_k",
+
         "stoch_d",
 
         "volume_sma",
 
         "buy_score",
+
         "sell_score",
 
         "sr_lookback",
+
         "sr_pivot",
 
         "min_volume_ratio",
@@ -2461,6 +3318,7 @@ async def update_settings(
     for key in numeric:
 
         if key not in new_settings:
+
             continue
 
         try:
@@ -2469,42 +3327,69 @@ async def update_settings(
                 new_settings[key]
             )
 
-            if value > 0:
+            if value <= 0:
 
-                if key == "min_volume_ratio":
+                continue
 
-                    settings[key] = value
+            if key == (
+                "min_volume_ratio"
+            ):
 
-                else:
+                settings[
+                    key
+                ] = value
 
-                    settings[key] = int(
-                        value
-                    )
+            else:
+
+                settings[
+                    key
+                ] = int(
+                    value
+                )
 
         except Exception:
+
             pass
+
+    # --------------------------------------------------------
+    # Minimum RR
+    # --------------------------------------------------------
 
     if "min_rr" in new_settings:
 
         try:
 
             v = float(
-                new_settings["min_rr"]
+                new_settings[
+                    "min_rr"
+                ]
             )
 
             if 0.5 <= v <= 10:
 
-                settings["min_rr"] = v
+                settings[
+                    "min_rr"
+                ] = v
 
         except Exception:
+
             pass
 
-    if "sl_buffer_pct" in new_settings:
+    # --------------------------------------------------------
+    # SL buffer
+    # --------------------------------------------------------
+
+    if (
+        "sl_buffer_pct"
+        in new_settings
+    ):
 
         try:
 
             v = float(
-                new_settings["sl_buffer_pct"]
+                new_settings[
+                    "sl_buffer_pct"
+                ]
             )
 
             if 0 <= v <= 5:
@@ -2514,19 +3399,36 @@ async def update_settings(
                 ] = v
 
         except Exception:
+
             pass
 
+    # --------------------------------------------------------
+    # EMA arrays
+    # --------------------------------------------------------
+
     for key, length in (
+
         ("wave_ema", 3),
+
         ("tide_ema", 3),
+
         ("tide_filter_ema", 2),
     ):
 
-        v = new_settings.get(key)
+        v = new_settings.get(
+            key
+        )
 
         if (
-            isinstance(v, list)
-            and len(v) == length
+
+            isinstance(
+                v,
+                list
+            )
+
+            and
+
+            len(v) == length
         ):
 
             try:
@@ -2541,9 +3443,12 @@ async def update_settings(
                     for x in a
                 ):
 
-                    settings[key] = a
+                    settings[
+                        key
+                    ] = a
 
             except Exception:
+
                 pass
 
     print(
@@ -2551,18 +3456,27 @@ async def update_settings(
         settings
     )
 
+    # --------------------------------------------------------
+    # Trigger a scan in background.
+    # Don't block API response.
+    # --------------------------------------------------------
+
     asyncio.create_task(
         scan()
     )
 
     return {
-        "ok": True,
-        "settings": settings
+
+        "ok":
+            True,
+
+        "settings":
+            settings
     }
 
 
 # ============================================================
-# WEBSOCKET TO FRONTEND
+# FRONTEND WEBSOCKET
 # ============================================================
 
 @app.websocket("/ws")
@@ -2578,10 +3492,14 @@ async def ws_endpoint(
 
     try:
 
+        # Send initial snapshot immediately.
         await websocket.send_text(
             json.dumps(
                 snapshot(),
-                separators=(",", ":")
+                separators=(
+                    ",",
+                    ":"
+                )
             )
         )
 
@@ -2589,12 +3507,16 @@ async def ws_endpoint(
 
             await websocket.receive_text()
 
-    except (
-        WebSocketDisconnect,
-        Exception
-    ):
+    except WebSocketDisconnect:
 
         pass
+
+    except Exception as exc:
+
+        print(
+            "Frontend WS disconnected:",
+            repr(exc)
+        )
 
     finally:
 
