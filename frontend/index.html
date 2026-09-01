@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delta Cloud Scanner V3</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#061019;color:#e9f2fa;font-family:Inter,Arial,sans-serif}
+header{position:sticky;top:0;z-index:5;padding:16px 18px;border-bottom:1px solid #233746;background:#08141f;display:flex;justify-content:space-between;gap:12px}
+h1{font-size:18px;margin:0 0 4px}.sub{color:#91a6b8;font-size:12px}.status{font-size:12px;white-space:nowrap}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#ff596b;margin-right:6px}.ok{background:#39df94}
+main{padding:16px;max-width:1800px;margin:auto}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.card,.panel{background:#0b1824;border:1px solid #223746;border-radius:13px;padding:13px;margin-bottom:12px}
+.card small{color:#8fa4b5}.card h2{margin:7px 0 0}.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}
+label{font-size:11px;color:#9db0bf}input,select,button{width:100%;margin-top:5px;padding:9px;background:#07131d;color:#fff;border:1px solid #304857;border-radius:8px}
+button{cursor:pointer;background:#102536;font-weight:bold}#msg{font-size:12px;color:#55e0a0}
+.tablewrap{overflow:auto;max-height:68vh}table{border-collapse:collapse;width:100%;font-size:11px;min-width:1900px}
+th,td{padding:8px 7px;border-bottom:1px solid #1c2c38;white-space:nowrap;text-align:right}th{position:sticky;top:0;background:#0d1d2a;color:#a9bdcc}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+.buy{color:#45e59c;font-weight:800}.sell{color:#ff6979;font-weight:800}.neutral{color:#8da0ae}
+.note{font-size:11px;color:#8399aa;line-height:1.5}
+@media(max-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}.cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){header{padding:12px}.grid{grid-template-columns:1fr 1fr}.cards{grid-template-columns:1fr 1fr}main{padding:10px}.card{padding:10px}.card h2{font-size:20px}}
+</style></head>
+<body>
+<header><div><h1>☁️ Delta Cloud Scanner V3</h1><div class="sub">High-quality setups • Automatic S/R • Heikin-Ashi Tide • Risk/Reward</div></div>
+<div class="status"><span id="dot" class="dot"></span><span id="st">Connecting</span></div></header>
+<main>
+<div class="cards">
+<div class="card"><small>Perpetuals</small><h2 id="coins">0</h2></div>
+<div class="card"><small>Last Scan</small><h2 id="scan">—</h2></div>
+<div class="card"><small>Wave</small><h2 id="wave">—</h2></div>
+<div class="card"><small>Tide</small><h2 id="tide">—</h2></div>
+</div>
+<div class="panel"><h3>⚙️ Scanner Settings</h3><div class="grid" id="settings"></div><button onclick="save()">💾 Save & Rescan</button><p id="msg"></p>
+<div class="note">S/R is recalculated automatically from the selected Wave timeframe. Signals are filtered for multiple confirmations and minimum R:R; no setup can be guaranteed profitable.</div></div>
+<div class="panel"><h3>📊 Live All-Perpetual Scanner</h3><div class="tablewrap"><table><thead><tr>
+<th>#</th><th>Coin</th><th>Price</th><th>24H</th><th>Volume</th><th>Vol Rank</th><th>OI</th><th>Wave</th><th>Tide</th><th>EMA9</th><th>EMA20</th><th>RSI</th><th>MACD</th><th>Stoch K/D</th><th>Score</th><th>Rank</th><th>Signal</th><th>Conf</th><th>HA</th><th>S2</th><th>S1</th><th>R1</th><th>R2</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>R:R</th>
+</tr></thead><tbody id="rows"></tbody></table></div></div>
+</main><script src="/app.js"></script></body></html>
