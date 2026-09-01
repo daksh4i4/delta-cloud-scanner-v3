@@ -3,6 +3,7 @@ import json
 import math
 import os
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -13,12 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 BASE = os.getenv("DELTA_BASE_URL", "https://api.india.delta.exchange").rstrip("/")
-WS_URL = os.getenv("DELTA_WS_URL", "wss://socket.india.delta.exchange")
+WS_URL = os.getenv("DELTA_WS_URL", "wss://public-socket.india.delta.exchange")
 TG = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 INTERVAL = max(30, int(os.getenv("SCAN_INTERVAL_SECONDS", "60")))
-BATCH_SIZE = max(2, int(os.getenv("SCAN_BATCH_SIZE", "5")))
+BATCH_SIZE = max(2, int(os.getenv("SCAN_BATCH_SIZE", "8")))
 HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT_SECONDS", "20"))
 CANDLE_COUNT = max(80, int(os.getenv("CANDLE_COUNT", "120")))
 
@@ -71,6 +72,8 @@ previous_signals: dict[str, str] = {}
 last_scan = 0.0
 scan_running = False
 ws_ok = False
+markets_ready = asyncio.Event()
+last_ws_broadcast = 0.0
 http_client: httpx.AsyncClient | None = None
 telegram_client: httpx.AsyncClient | None = None
 
@@ -286,24 +289,63 @@ async def candles(symbol, timeframe, count=CANDLE_COUNT):
 
 
 async def load_markets():
+    """Load every live perpetual future from Delta REST.
+
+    REST is the initial/source-of-truth snapshot. WebSocket is only used
+    afterwards for live price updates. Never erase a good market snapshot
+    because of a transient API failure.
+    """
     global markets
-    data = await get_json("/v2/tickers", {"contract_types": "perpetual_futures"})
-    result = data.get("result", [])
-    new = {}
+
+    data = await get_json(
+        "/v2/tickers",
+        {"contract_types": "perpetual_futures"},
+    )
+    if not isinstance(data, dict) or data.get("success") is False:
+        raise RuntimeError(f"Delta tickers API failed: {data}")
+
+    result = data.get("result") or []
+    if not isinstance(result, list) or not result:
+        raise RuntimeError("Delta returned zero perpetual tickers")
+
+    old_markets = markets
+    new: dict[str, dict[str, Any]] = {}
+
     for t in result:
-        symbol = t.get("symbol")
+        if not isinstance(t, dict):
+            continue
+        symbol = str(t.get("symbol") or "").strip()
         if not symbol:
             continue
-        old = markets.get(symbol, {})
+
+        old = old_markets.get(symbol, {})
+        price = num(
+            t.get("close")
+            or t.get("mark_price")
+            or t.get("spot_price")
+            or old.get("price")
+        )
+        change = num(t.get("ltp_change_24h") or t.get("price_change_24h"))
+        volume = num(t.get("turnover_usd") or t.get("turnover") or t.get("volume"))
+        oi = num(t.get("oi_value_usd") or t.get("oi_value") or t.get("oi"))
+
         new[symbol] = {
             "symbol": symbol,
-            "price": num(t.get("close") or t.get("mark_price") or old.get("price")),
-            "change": num(t.get("ltp_change_24h")),
-            "volume": num(t.get("turnover_usd") or t.get("turnover")),
-            "oi": num(t.get("oi_value_usd") or t.get("oi")),
+            "price": price,
+            "change": change,
+            "volume": volume,
+            "oi": oi,
             "indicators": old.get("indicators"),
         }
+
+    if not new:
+        raise RuntimeError("Delta response contained no valid perpetual symbols")
+
     markets = new
+    markets_ready.set()
+    print(f"Loaded {len(markets)} perpetual markets from Delta REST.")
+    await broadcast()
+
 
 
 async def telegram(message):
@@ -499,27 +541,56 @@ async def send_signal(symbol, result):
 async def scan():
     global last_scan, scan_running
     if scan_running:
+        print("Previous scan still running; skipping overlapping scan.")
         return
+
     scan_running = True
     started = time.time()
     try:
         await load_markets()
         symbols = list(markets)
+        if not symbols:
+            raise RuntimeError("No perpetual markets loaded")
+
+        # Broadcast immediately so the UI shows all coins even while indicator
+        # calculations are still running.
+        await broadcast()
+        print(f"Starting indicator scan: {len(symbols)} perpetuals")
+
         results = await process_batch(symbols)
-        ranked = sorted(results, key=lambda s: results[s]["score"], reverse=True)
+        ranked = sorted(
+            results,
+            key=lambda symbol: results[symbol].get("score", 0),
+            reverse=True,
+        )
+
         for rank, symbol in enumerate(ranked, 1):
             results[symbol]["score_rank"] = rank
-            markets[symbol]["indicators"] = results[symbol]
+            if symbol in markets:
+                markets[symbol]["indicators"] = results[symbol]
+
         for symbol, result in results.items():
             await send_signal(symbol, result)
             previous_signals[symbol] = result["signal"]
+
         last_scan = time.time()
-        print(f"Scan complete: {len(results)}/{len(symbols)} in {time.time()-started:.1f}s")
+        elapsed = time.time() - started
+        buys = sum(1 for r in results.values() if r.get("signal") == "BUY")
+        sells = sum(1 for r in results.values() if r.get("signal") == "SELL")
+        print(
+            f"Scan complete: {len(results)}/{len(symbols)} markets "
+            f"in {elapsed:.1f}s | BUY={buys} SELL={sells}"
+        )
         await broadcast()
-    except Exception as e:
-        print("scan:", e)
+
+    except Exception as exc:
+        print("SCAN ERROR:", repr(exc))
+        traceback.print_exc()
+        # Keep the last good market/indicator snapshot visible.
+        await broadcast()
     finally:
         scan_running = False
+
 
 
 async def scanner_loop():
@@ -534,37 +605,110 @@ async def scanner_loop():
 
 
 async def websocket_loop():
-    global ws_ok
+    """Maintain Delta public ticker feed.
+
+    Delta migrated v2/ticker to the public socket and the new channel is
+    named `ticker`. The new payload uses compact keys such as `sy`/`s` and
+    `p`/`c`, so parsing below accepts both compact and legacy shapes.
+    """
+    global ws_ok, last_ws_broadcast
+
     while True:
         try:
-            print("Connecting Delta WebSocket...")
+            await markets_ready.wait()
+            symbols = list(markets.keys())
+            if not symbols:
+                await asyncio.sleep(2)
+                continue
+
+            print(f"Connecting Delta public WebSocket for {len(symbols)} symbols...")
             async with websockets.connect(
-                WS_URL, ping_interval=20, ping_timeout=20, close_timeout=5, max_size=2_000_000
+                WS_URL,
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=5,
+                max_size=2_000_000,
             ) as ws:
                 ws_ok = True
-                await ws.send(json.dumps({
-                    "type": "subscribe",
-                    "payload": {"channels": [{"name": "v2/ticker", "symbols": ["all"]}]}
-                }))
-                print("Delta WebSocket connected.")
+                print("Delta public WebSocket connected.")
+
+                # Subscribe in safe chunks. `ticker` requires explicit symbols;
+                # subscribing to ["all"] does not provide ticker snapshots.
+                for start in range(0, len(symbols), 100):
+                    chunk = symbols[start:start + 100]
+                    await ws.send(json.dumps({
+                        "type": "subscribe",
+                        "payload": {
+                            "channels": [{
+                                "name": "ticker",
+                                "symbols": chunk,
+                            }]
+                        },
+                    }))
+
+                print(f"Subscribed to ticker for {len(symbols)} perpetuals.")
+
                 async for raw in ws:
                     try:
-                        d = json.loads(raw)
-                        d = d.get("data") or d.get("result")
-                        if not isinstance(d, dict):
+                        message = json.loads(raw)
+                        if not isinstance(message, dict):
                             continue
-                        symbol = d.get("symbol")
+
+                        # Ignore heartbeats/subscription acknowledgements.
+                        if message.get("type") in {"heartbeat", "subscriptions"}:
+                            continue
+
+                        data = message.get("data") or message.get("result") or message
+                        if not isinstance(data, dict):
+                            continue
+
+                        symbol = str(
+                            data.get("sy")
+                            or data.get("s")
+                            or data.get("symbol")
+                            or ""
+                        )
+                        if symbol.startswith("MARK:"):
+                            symbol = symbol[5:]
                         if symbol not in markets:
                             continue
-                        price = d.get("close") or d.get("mark_price")
+
+                        # New ticker payload: price is commonly `p`; accept
+                        # close/mark_price as fallback for compatibility.
+                        price = (
+                            data.get("p")
+                            or data.get("close")
+                            or data.get("c")
+                            or data.get("mark_price")
+                            or data.get("spot_price")
+                        )
                         if price is not None:
-                            markets[symbol]["price"] = num(price, markets[symbol].get("price", 0))
-                    except Exception:
-                        pass
-        except Exception as e:
+                            markets[symbol]["price"] = num(
+                                price, markets[symbol].get("price", 0)
+                            )
+
+                        # Keep optional live fields when present.
+                        if data.get("ltp_change_24h") is not None:
+                            markets[symbol]["change"] = num(data.get("ltp_change_24h"))
+                        if data.get("v") is not None:
+                            markets[symbol]["live_volume"] = num(data.get("v"))
+
+                        now = time.time()
+                        if now - last_ws_broadcast >= 2.0:
+                            last_ws_broadcast = now
+                            await broadcast()
+
+                    except Exception as exc:
+                        print("WS message parse:", exc)
+                        continue
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             ws_ok = False
-            print("WS reconnect:", e)
+            print("WS reconnect:", repr(exc))
             await asyncio.sleep(5)
+
 
 
 def snapshot():
@@ -619,6 +763,23 @@ async def shutdown():
 @app.get("/")
 async def root():
     return FileResponse(ROOT / "frontend" / "index.html")
+
+
+@app.head("/")
+async def root_head():
+    # Render may probe the root with HEAD. Return 200 instead of 405.
+    return None
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "ok": True,
+        "ws_connected": ws_ok,
+        "markets": len(markets),
+        "last_scan": last_scan,
+        "scan_running": scan_running,
+    }
 
 
 @app.get("/api/status")
