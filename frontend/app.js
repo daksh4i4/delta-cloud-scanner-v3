@@ -1,20 +1,39 @@
 /* ============================================================
    DELTA CLOUD SCANNER V3
-   PROFESSIONAL FRONTEND
+   FINAL PROFESSIONAL FRONTEND
    ------------------------------------------------------------
-   Scanner logic is NOT changed here.
-   This file only handles:
-   - Settings UI
-   - API communication
+   IMPORTANT:
+   This file DOES NOT change scanner calculations.
+   It only handles:
+   - Settings
+   - Rendering
+   - Search
+   - BUY / SELL / NEUTRAL filters
    - WebSocket updates
-   - Table rendering
-   - Professional UI styling
+   - UI formatting
+   ============================================================ */
+
+
+/* ============================================================
+   BASIC HELPERS
    ============================================================ */
 
 const $ = id => document.getElementById(id);
 
+
 /* ============================================================
-   TIMEFRAME OPTIONS
+   GLOBAL FILTER STATE
+   ============================================================ */
+
+let activeFilter = "ALL";
+let searchText = "";
+let latestData = null;
+let socket = null;
+let reconnectTimer = null;
+
+
+/* ============================================================
+   TIMEFRAMES
    ============================================================ */
 
 const TF = [
@@ -33,11 +52,13 @@ const TF = [
   "1M"
 ];
 
+
 /* ============================================================
    SETTINGS DEFINITIONS
    ============================================================ */
 
 const defs = [
+
   ["wave_tf", "Wave TF", "select"],
   ["tide_tf", "Tide TF", "select"],
 
@@ -74,9 +95,12 @@ const defs = [
 
   ["rr", "Minimum R:R", "number"],
   ["slb", "SL Buffer %", "number"],
+
   ["mvr", "Min Volume Ratio", "number"],
   ["mc", "Min Confirmations", "number"]
+
 ];
+
 
 /* ============================================================
    BUILD SETTINGS FORM
@@ -113,7 +137,8 @@ for (const d of defs) {
 
     TF.forEach(t => {
 
-      const option = document.createElement("option");
+      const option =
+        document.createElement("option");
 
       option.value = t;
       option.textContent = t;
@@ -129,701 +154,526 @@ for (const d of defs) {
   $("settings").appendChild(label);
 }
 
+
 /* ============================================================
    PROFESSIONAL UI
    ============================================================ */
 
 function applyProfessionalUI() {
 
-  if (document.getElementById("professional-scanner-ui")) {
+  if (document.getElementById(
+    "professional-scanner-ui"
+  )) {
     return;
   }
 
-  const style = document.createElement("style");
+  const style =
+    document.createElement("style");
 
-  style.id = "professional-scanner-ui";
+  style.id =
+    "professional-scanner-ui";
 
   style.textContent = `
-
-    /* ========================================================
-       GLOBAL
-       ======================================================== */
 
     * {
       box-sizing: border-box;
     }
 
-    body {
-      background:
-        radial-gradient(
-          circle at top left,
-          rgba(0, 255, 170, 0.055),
-          transparent 30%
-        ),
-        radial-gradient(
-          circle at top right,
-          rgba(80, 120, 255, 0.055),
-          transparent 30%
-        ),
-        #070b12;
-
-      color: #e7edf5;
-      font-family:
-        Inter,
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
-
-      margin: 0;
-    }
-
-    /* ========================================================
-       MAIN CONTAINER
-       ======================================================== */
-
-    body > div,
-    .container,
-    .app,
-    main {
-      max-width: 1800px;
-    }
-
-    /* ========================================================
-       HEADINGS
-       ======================================================== */
-
-    h1 {
-      font-weight: 800;
-      letter-spacing: -0.5px;
-    }
-
-    h2,
-    h3 {
-      font-weight: 700;
-    }
-
-    /* ========================================================
-       CARDS
-       ======================================================== */
-
-    .card,
-    .panel,
-    section,
-    .settings-panel {
-
-      background:
-        linear-gradient(
-          145deg,
-          rgba(18, 25, 36, 0.96),
-          rgba(9, 14, 22, 0.96)
-        );
-
-      border: 1px solid rgba(255,255,255,0.07);
-
-      border-radius: 14px;
-
-      box-shadow:
-        0 12px 35px rgba(0,0,0,0.22),
-        inset 0 1px 0 rgba(255,255,255,0.025);
-    }
-
-    /* ========================================================
+    /* --------------------------------------------------------
        SETTINGS
-       ======================================================== */
+       -------------------------------------------------------- */
 
     #settings {
 
-      display: grid;
+      display:grid;
 
       grid-template-columns:
-        repeat(auto-fit, minmax(145px, 1fr));
+        repeat(auto-fit,minmax(145px,1fr));
 
-      gap: 10px;
+      gap:10px;
 
-      margin-top: 12px;
-      margin-bottom: 18px;
+      margin-top:12px;
+      margin-bottom:18px;
     }
 
     #settings label {
 
-      display: flex;
+      display:flex;
 
-      flex-direction: column;
+      flex-direction:column;
 
-      gap: 6px;
+      gap:6px;
 
-      padding: 9px 10px;
+      padding:9px 10px;
 
-      background: rgba(255,255,255,0.025);
+      background:
+        rgba(255,255,255,.025);
 
       border:
-        1px solid rgba(255,255,255,0.055);
+        1px solid rgba(255,255,255,.055);
 
-      border-radius: 10px;
+      border-radius:10px;
 
-      color: #9caabd;
+      color:#9caabd;
 
-      font-size: 11px;
+      font-size:11px;
 
-      font-weight: 600;
+      font-weight:600;
 
-      transition: 0.2s ease;
+      transition:.2s ease;
     }
 
     #settings label:hover {
 
       border-color:
-        rgba(0, 220, 160, 0.25);
+        rgba(0,220,160,.25);
 
       background:
-        rgba(0, 220, 160, 0.035);
+        rgba(0,220,160,.035);
     }
 
     #settings input,
     #settings select {
 
-      width: 100%;
+      width:100%;
 
-      background: #0c131d;
+      background:#0c131d;
 
-      color: #edf4fb;
+      color:#edf4fb;
 
       border:
-        1px solid rgba(255,255,255,0.09);
+        1px solid rgba(255,255,255,.09);
 
-      border-radius: 7px;
+      border-radius:7px;
 
-      padding: 7px 8px;
+      padding:7px 8px;
 
-      outline: none;
+      outline:none;
 
-      font-size: 12px;
+      font-size:12px;
 
-      font-weight: 600;
+      font-weight:600;
     }
 
     #settings input:focus,
     #settings select:focus {
 
       border-color:
-        rgba(0, 220, 160, 0.65);
+        rgba(0,220,160,.65);
 
       box-shadow:
         0 0 0 2px
-        rgba(0, 220, 160, 0.08);
+        rgba(0,220,160,.08);
     }
 
-    /* ========================================================
+
+    /* --------------------------------------------------------
        STATUS
-       ======================================================== */
-
-    .dot {
-
-      display: inline-block;
-
-      width: 9px;
-      height: 9px;
-
-      border-radius: 50%;
-
-      background: #64748b;
-
-      margin-right: 7px;
-
-      box-shadow: 0 0 0 transparent;
-    }
+       -------------------------------------------------------- */
 
     .dot.ok {
 
-      background: #00e6a0;
+      background:#00e6a0 !important;
 
       box-shadow:
-        0 0 8px
-        rgba(0,230,160,0.8);
+        0 0 10px
+        rgba(0,230,160,.8) !important;
     }
 
-    /* ========================================================
-       TABLE WRAPPER
-       ======================================================== */
 
-    .table-wrap {
-
-      width: 100%;
-
-      overflow-x: auto;
-
-      border-radius: 14px;
-
-      border:
-        1px solid rgba(255,255,255,0.07);
-
-      background: #080d14;
-
-      box-shadow:
-        0 14px 40px rgba(0,0,0,0.25);
-    }
-
-    /* ========================================================
+    /* --------------------------------------------------------
        TABLE
-       ======================================================== */
+       -------------------------------------------------------- */
 
     table {
 
-      width: 100%;
-
-      min-width: 1900px;
-
-      border-collapse: separate;
-
-      border-spacing: 0;
-
-      font-size: 12px;
-    }
-
-    thead th {
-
-      position: sticky;
-
-      top: 0;
-
-      z-index: 5;
-
-      background:
-        linear-gradient(
-          180deg,
-          #131c28,
-          #0d151f
-        );
-
-      color: #9eafc3;
-
-      font-size: 10px;
-
-      font-weight: 800;
-
-      text-transform: uppercase;
-
-      letter-spacing: .45px;
-
-      white-space: nowrap;
-
-      padding: 11px 10px;
-
-      border-bottom:
-        1px solid rgba(255,255,255,0.08);
-    }
-
-    tbody td {
-
-      padding: 10px 9px;
-
-      border-bottom:
-        1px solid rgba(255,255,255,0.035);
-
-      white-space: nowrap;
-
-      color: #dbe4ee;
-
-      font-variant-numeric: tabular-nums;
+      font-variant-numeric:
+        tabular-nums;
     }
 
     tbody tr {
 
       transition:
-        background 0.16s ease,
-        transform 0.16s ease;
+        background .15s ease;
     }
 
     tbody tr:hover {
 
       background:
-        rgba(255,255,255,0.035);
+        rgba(0,230,160,.035);
     }
 
-    tbody tr:last-child td {
 
-      border-bottom: none;
-    }
-
-    /* ========================================================
-       COIN NAME
-       ======================================================== */
+    /* --------------------------------------------------------
+       COIN
+       -------------------------------------------------------- */
 
     .coin-name {
 
-      color: #ffffff;
+      color:#fff;
 
-      font-weight: 800;
+      font-weight:900;
 
-      letter-spacing: .2px;
+      letter-spacing:.2px;
     }
 
-    /* ========================================================
-       POSITIVE / NEGATIVE
-       ======================================================== */
+
+    /* --------------------------------------------------------
+       24H CHANGE
+       -------------------------------------------------------- */
 
     .positive {
 
-      color: #00e6a0 !important;
+      color:#00e6a0 !important;
 
-      font-weight: 800;
+      font-weight:900;
     }
 
     .negative {
 
-      color: #ff5577 !important;
+      color:#ff5577 !important;
 
-      font-weight: 800;
+      font-weight:900;
     }
 
     .neutral-value {
 
-      color: #9aa8b8 !important;
+      color:#9aa8b8 !important;
     }
 
-    /* ========================================================
-       SIGNAL BADGES
-       ======================================================== */
+
+    /* --------------------------------------------------------
+       SIGNAL
+       -------------------------------------------------------- */
 
     .signal-badge {
 
-      display: inline-flex;
+      display:inline-flex;
 
-      align-items: center;
+      align-items:center;
 
-      justify-content: center;
+      justify-content:center;
 
-      min-width: 74px;
+      min-width:72px;
 
-      padding: 5px 10px;
+      padding:5px 9px;
 
-      border-radius: 999px;
+      border-radius:999px;
 
-      font-size: 10px;
+      font-size:9px;
 
-      font-weight: 900;
+      font-weight:900;
 
-      letter-spacing: .5px;
-
-      border: 1px solid transparent;
+      letter-spacing:.4px;
     }
 
     .signal-buy {
 
-      color: #00f0a8;
+      color:#00f0a8;
 
       background:
-        rgba(0,230,160,0.11);
+        rgba(0,230,160,.11);
 
-      border-color:
-        rgba(0,230,160,0.28);
-
-      box-shadow:
-        0 0 14px
-        rgba(0,230,160,0.06);
+      border:
+        1px solid
+        rgba(0,230,160,.30);
     }
 
     .signal-sell {
 
-      color: #ff587b;
+      color:#ff587b;
 
       background:
-        rgba(255,70,105,0.10);
+        rgba(255,70,105,.11);
 
-      border-color:
-        rgba(255,70,105,0.28);
-
-      box-shadow:
-        0 0 14px
-        rgba(255,70,105,0.05);
+      border:
+        1px solid
+        rgba(255,70,105,.30);
     }
 
     .signal-neutral {
 
-      color: #a8b4c3;
+      color:#a8b4c3;
 
       background:
-        rgba(148,163,184,0.08);
+        rgba(148,163,184,.08);
 
-      border-color:
-        rgba(148,163,184,0.18);
+      border:
+        1px solid
+        rgba(148,163,184,.18);
     }
 
-    /* ========================================================
+
+    /* --------------------------------------------------------
        SCORE
-       ======================================================== */
+       -------------------------------------------------------- */
 
     .score {
 
-      display: inline-flex;
+      display:inline-flex;
 
-      align-items: center;
+      align-items:center;
 
-      justify-content: center;
+      justify-content:center;
 
-      min-width: 45px;
+      min-width:42px;
 
-      padding: 4px 7px;
+      padding:4px 7px;
 
-      border-radius: 7px;
+      border-radius:6px;
 
-      font-weight: 900;
+      font-weight:900;
     }
 
     .score-high {
 
-      color: #00edaa;
+      color:#00edaa;
 
       background:
-        rgba(0,230,160,0.10);
-
-      border:
-        1px solid rgba(0,230,160,0.18);
+        rgba(0,230,160,.08);
     }
 
     .score-low {
 
-      color: #ff5b7e;
+      color:#ff5b7e;
 
       background:
-        rgba(255,70,105,0.10);
-
-      border:
-        1px solid rgba(255,70,105,0.18);
+        rgba(255,70,105,.08);
     }
 
     .score-mid {
 
-      color: #f6c85f;
+      color:#f4ca60;
 
       background:
-        rgba(246,200,95,0.08);
-
-      border:
-        1px solid rgba(246,200,95,0.16);
+        rgba(244,202,96,.08);
     }
 
-    /* ========================================================
+
+    /* --------------------------------------------------------
        CONFIRMATION
-       ======================================================== */
+       -------------------------------------------------------- */
 
     .confirmation {
 
-      display: inline-flex;
+      display:inline-flex;
 
-      align-items: center;
+      align-items:center;
 
-      justify-content: center;
+      justify-content:center;
 
-      padding: 4px 7px;
+      min-width:32px;
 
-      border-radius: 6px;
+      padding:4px 7px;
 
-      font-weight: 800;
+      border-radius:6px;
 
-      font-size: 10px;
+      font-size:9px;
+
+      font-weight:900;
     }
 
     .confirmation-strong {
 
-      color: #00e6a0;
+      color:#00e6a0;
 
       background:
-        rgba(0,230,160,0.09);
+        rgba(0,230,160,.08);
     }
 
     .confirmation-medium {
 
-      color: #f4c95d;
+      color:#f4ca60;
 
       background:
-        rgba(244,201,93,0.08);
+        rgba(244,202,96,.08);
     }
 
     .confirmation-low {
 
-      color: #ff627f;
+      color:#ff627f;
 
       background:
-        rgba(255,98,127,0.08);
+        rgba(255,98,127,.08);
     }
 
-    /* ========================================================
-       HEIKIN ASHI
-       ======================================================== */
 
-    .ha-bull {
-
-      color: #00e6a0;
-
-      font-weight: 900;
-    }
-
-    .ha-bear {
-
-      color: #ff5577;
-
-      font-weight: 900;
-    }
-
-    /* ========================================================
+    /* --------------------------------------------------------
        INDICATORS
-       ======================================================== */
+       -------------------------------------------------------- */
 
     .indicator-buy {
 
-      color: #00e6a0;
+      color:#00e6a0;
 
-      font-weight: 700;
+      font-weight:800;
     }
 
     .indicator-sell {
 
-      color: #ff5577;
+      color:#ff5577;
 
-      font-weight: 700;
+      font-weight:800;
     }
 
     .indicator-neutral {
 
-      color: #a4b0bf;
+      color:#9aa8b8;
     }
 
-    /* ========================================================
-       TRADE PLAN
-       ======================================================== */
 
-    .entry {
+    /* --------------------------------------------------------
+       HEIKIN ASHI
+       -------------------------------------------------------- */
 
-      color: #70b7ff;
+    .ha-bull {
 
-      font-weight: 800;
+      color:#00e6a0;
+
+      font-weight:900;
     }
 
-    .sl {
+    .ha-bear {
 
-      color: #ff587b;
+      color:#ff5577;
 
-      font-weight: 800;
+      font-weight:900;
     }
 
-    .tp {
 
-      color: #00e6a0;
-
-      font-weight: 800;
-    }
-
-    .rr-value {
-
-      color: #f4c95d;
-
-      font-weight: 900;
-    }
-
-    /* ========================================================
+    /* --------------------------------------------------------
        S/R
-       ======================================================== */
+       -------------------------------------------------------- */
 
     .support {
 
-      color: #78d9bb;
+      color:#73d9bc;
 
-      font-weight: 650;
+      font-weight:700;
     }
 
     .resistance {
 
-      color: #ff9aae;
+      color:#ff9aaa;
 
-      font-weight: 650;
+      font-weight:700;
     }
 
-    /* ========================================================
-       BUTTONS
-       ======================================================== */
 
-    button {
+    /* --------------------------------------------------------
+       TRADE PLAN
+       -------------------------------------------------------- */
 
-      border: 1px solid
-        rgba(0,230,160,0.25);
+    .entry {
+
+      color:#70b7ff;
+
+      font-weight:900;
+    }
+
+    .sl {
+
+      color:#ff587b;
+
+      font-weight:900;
+    }
+
+    .tp {
+
+      color:#00e6a0;
+
+      font-weight:900;
+    }
+
+    .rr-value {
+
+      color:#f4ca60;
+
+      font-weight:900;
+    }
+
+
+    /* --------------------------------------------------------
+       FILTER COUNT
+       -------------------------------------------------------- */
+
+    #filterCount {
+
+      display:inline-flex;
+
+      align-items:center;
+
+      margin-left:7px;
+
+      padding:3px 8px;
+
+      border-radius:999px;
 
       background:
-        linear-gradient(
-          135deg,
-          rgba(0,230,160,0.13),
-          rgba(0,150,255,0.08)
-        );
+        rgba(255,255,255,.05);
 
-      color: #eafff8;
+      border:
+        1px solid
+        rgba(255,255,255,.08);
 
-      border-radius: 9px;
+      color:#8fa3b3;
 
-      padding: 9px 15px;
+      font-size:9px;
 
-      font-weight: 800;
-
-      cursor: pointer;
-
-      transition: .18s ease;
+      font-weight:800;
     }
 
-    button:hover {
 
-      transform: translateY(-1px);
+    /* --------------------------------------------------------
+       ACTIVE FILTERS
+       -------------------------------------------------------- */
 
-      border-color:
-        rgba(0,230,160,0.5);
+    .filter-btn.active {
 
       box-shadow:
-        0 8px 22px
-        rgba(0,230,160,0.08);
+        0 0 12px
+        rgba(70,150,190,.10);
     }
 
-    button:active {
 
-      transform: translateY(0);
+    /* --------------------------------------------------------
+       EMPTY RESULT
+       -------------------------------------------------------- */
+
+    .filter-empty {
+
+      padding:35px !important;
+
+      text-align:center !important;
+
+      color:#71899a !important;
+
+      font-weight:600;
     }
 
-    /* ========================================================
-       STATUS TEXT
-       ======================================================== */
 
-    #msg {
+    /* --------------------------------------------------------
+       MOBILE
+       -------------------------------------------------------- */
 
-      color: #00e6a0;
-
-      font-weight: 700;
-
-      font-size: 12px;
-    }
-
-    /* ========================================================
-       RESPONSIVE
-       ======================================================== */
-
-    @media (max-width: 900px) {
+    @media(max-width:900px) {
 
       #settings {
 
         grid-template-columns:
-          repeat(2, minmax(130px, 1fr));
+          repeat(3,minmax(130px,1fr));
       }
 
-      table {
-
-        font-size: 11px;
-      }
     }
 
-    @media (max-width: 600px) {
+    @media(max-width:600px) {
 
       #settings {
 
-        grid-template-columns: 1fr;
+        grid-template-columns:
+          repeat(2,minmax(120px,1fr));
       }
+
     }
 
   `;
@@ -833,61 +683,86 @@ function applyProfessionalUI() {
 
 applyProfessionalUI();
 
+
 /* ============================================================
    SETTINGS FILL
    ============================================================ */
 
 function fill(s) {
 
-  if (!s) return;
+  if (!s) {
+    return;
+  }
 
-  $("wave_tf").value = s.wave_tf;
-  $("tide_tf").value = s.tide_tf;
+  if ($("wave_tf")) {
+    $("wave_tf").value = s.wave_tf;
+  }
 
-  ["we1", "we2", "we3"].forEach((x, i) => {
-    $(x).value = s.wave_ema[i];
-  });
+  if ($("tide_tf")) {
+    $("tide_tf").value = s.tide_tf;
+  }
 
-  ["te1", "te2", "te3"].forEach((x, i) => {
-    $(x).value = s.tide_ema[i];
-  });
+  ["we1","we2","we3"].forEach(
+    (x,i) => {
+      if ($(x) && s.wave_ema) {
+        $(x).value = s.wave_ema[i];
+      }
+    }
+  );
 
-  ["fe1", "fe2"].forEach((x, i) => {
-    $(x).value = s.tide_filter_ema[i];
-  });
+  ["te1","te2","te3"].forEach(
+    (x,i) => {
+      if ($(x) && s.tide_ema) {
+        $(x).value = s.tide_ema[i];
+      }
+    }
+  );
 
-  $("rp").value = s.rsi_period;
-  $("rb").value = s.rsi_buy;
-  $("rs").value = s.rsi_sell;
+  ["fe1","fe2"].forEach(
+    (x,i) => {
+      if ($(x) && s.tide_filter_ema) {
+        $(x).value =
+          s.tide_filter_ema[i];
+      }
+    }
+  );
 
-  $("mf").value = s.macd_fast;
-  $("ms").value = s.macd_slow;
-  $("mg").value = s.macd_signal;
+  if ($("rp")) $("rp").value = s.rsi_period;
+  if ($("rb")) $("rb").value = s.rsi_buy;
+  if ($("rs")) $("rs").value = s.rsi_sell;
 
-  $("sp").value = s.stoch_period;
-  $("sk").value = s.stoch_k;
-  $("sd").value = s.stoch_d;
+  if ($("mf")) $("mf").value = s.macd_fast;
+  if ($("ms")) $("ms").value = s.macd_slow;
+  if ($("mg")) $("mg").value = s.macd_signal;
 
-  $("vs").value = s.volume_sma;
+  if ($("sp")) $("sp").value = s.stoch_period;
+  if ($("sk")) $("sk").value = s.stoch_k;
+  if ($("sd")) $("sd").value = s.stoch_d;
 
-  $("bs").value = s.buy_score;
-  $("ss").value = s.sell_score;
+  if ($("vs")) $("vs").value = s.volume_sma;
 
-  $("srl").value = s.sr_lookback;
-  $("srp").value = s.sr_pivot;
+  if ($("bs")) $("bs").value = s.buy_score;
+  if ($("ss")) $("ss").value = s.sell_score;
 
-  $("rr").value = s.min_rr;
-  $("slb").value = s.sl_buffer_pct;
+  if ($("srl")) $("srl").value = s.sr_lookback;
+  if ($("srp")) $("srp").value = s.sr_pivot;
 
-  $("mvr").value = s.min_volume_ratio;
-  $("mc").value = s.min_signal_confirmations;
+  if ($("rr")) $("rr").value = s.min_rr;
+  if ($("slb")) $("slb").value = s.sl_buffer_pct;
+
+  if ($("mvr")) $("mvr").value = s.min_volume_ratio;
+  if ($("mc")) $("mc").value =
+    s.min_signal_confirmations;
 }
+
 
 /* ============================================================
    NUMBER HELPER
    ============================================================ */
 
-const n = id => Number($(id).value);
+const n = id =>
+  Number($(id).value);
+
 
 /* ============================================================
    SAVE SETTINGS
@@ -895,10 +770,22 @@ const n = id => Number($(id).value);
 
 async function save() {
 
+  const button =
+    $("saveButton");
+
+  if (button) {
+    button.disabled = true;
+    button.textContent =
+      "⏳ Saving...";
+  }
+
   const s = {
 
-    wave_tf: $("wave_tf").value,
-    tide_tf: $("tide_tf").value,
+    wave_tf:
+      $("wave_tf").value,
+
+    tide_tf:
+      $("tide_tf").value,
 
     wave_ema: [
       n("we1"),
@@ -917,69 +804,136 @@ async function save() {
       n("fe2")
     ],
 
-    rsi_period: n("rp"),
-    rsi_buy: n("rb"),
-    rsi_sell: n("rs"),
+    rsi_period:
+      n("rp"),
 
-    macd_fast: n("mf"),
-    macd_slow: n("ms"),
-    macd_signal: n("mg"),
+    rsi_buy:
+      n("rb"),
 
-    stoch_period: n("sp"),
-    stoch_k: n("sk"),
-    stoch_d: n("sd"),
+    rsi_sell:
+      n("rs"),
 
-    volume_sma: n("vs"),
+    macd_fast:
+      n("mf"),
 
-    buy_score: n("bs"),
-    sell_score: n("ss"),
+    macd_slow:
+      n("ms"),
 
-    sr_lookback: n("srl"),
-    sr_pivot: n("srp"),
+    macd_signal:
+      n("mg"),
 
-    min_rr: n("rr"),
-    sl_buffer_pct: n("slb"),
+    stoch_period:
+      n("sp"),
 
-    min_volume_ratio: n("mvr"),
-    min_signal_confirmations: n("mc")
+    stoch_k:
+      n("sk"),
+
+    stoch_d:
+      n("sd"),
+
+    volume_sma:
+      n("vs"),
+
+    buy_score:
+      n("bs"),
+
+    sell_score:
+      n("ss"),
+
+    sr_lookback:
+      n("srl"),
+
+    sr_pivot:
+      n("srp"),
+
+    min_rr:
+      n("rr"),
+
+    sl_buffer_pct:
+      n("slb"),
+
+    min_volume_ratio:
+      n("mvr"),
+
+    min_signal_confirmations:
+      n("mc")
   };
 
   try {
 
-    const r = await fetch(
-      "/api/settings",
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(s)
-      }
+    const r =
+      await fetch(
+        "/api/settings",
+        {
+          method:"PUT",
+
+          headers:{
+            "Content-Type":
+              "application/json"
+          },
+
+          body:
+            JSON.stringify(s)
+        }
+      );
+
+    if (!r.ok) {
+
+      throw new Error(
+        `HTTP ${r.status}`
+      );
+    }
+
+    const j =
+      await r.json();
+
+    if (j.settings) {
+      fill(j.settings);
+    }
+
+    if ($("msg")) {
+
+      $("msg").textContent =
+        "✓ Saved. New scan started.";
+
+      setTimeout(() => {
+
+        $("msg").textContent = "";
+
+      },3000);
+    }
+
+  } catch(e) {
+
+    console.error(
+      "Settings save error:",
+      e
     );
 
-    const j = await r.json();
+    if ($("msg")) {
 
-    fill(j.settings);
+      $("msg").textContent =
+        "Save failed: " + e.message;
+    }
 
-    $("msg").textContent =
-      "✓ Saved. New scan started.";
+  } finally {
 
-    setTimeout(() => {
-      $("msg").textContent = "";
-    }, 3000);
+    if (button) {
 
-  } catch (e) {
+      button.disabled = false;
 
-    $("msg").textContent =
-      "Save failed: " + e;
+      button.textContent =
+        "💾 Save & Rescan";
+    }
   }
 }
 
+
 /* ============================================================
-   NUMBER FORMATTER
+   GENERAL FORMATTER
    ============================================================ */
 
-function f(x, d = 6) {
+function f(x,d=6) {
 
   if (
     x === null ||
@@ -993,13 +947,14 @@ function f(x, d = 6) {
   return Number(x).toLocaleString(
     undefined,
     {
-      maximumFractionDigits: d
+      maximumFractionDigits:d
     }
   );
 }
 
+
 /* ============================================================
-   PERCENT FORMATTER
+   24H CHANGE
    ============================================================ */
 
 function formatChange(x) {
@@ -1007,79 +962,85 @@ function formatChange(x) {
   if (
     x === null ||
     x === undefined ||
+    x === "" ||
     Number.isNaN(Number(x))
   ) {
     return "—";
   }
 
-  const v = Number(x);
+  const value =
+    Number(x);
 
-  if (v > 0) {
+  if (value > 0) {
 
     return `
       <span class="positive">
-        ▲ ${f(v, 2)}%
+        ▲ ${f(value,2)}%
       </span>
     `;
   }
 
-  if (v < 0) {
+  if (value < 0) {
 
     return `
       <span class="negative">
-        ▼ ${f(Math.abs(v), 2)}%
+        ▼ ${f(Math.abs(value),2)}%
       </span>
     `;
   }
 
   return `
     <span class="neutral-value">
-      ${f(v, 2)}%
+      ${f(value,2)}%
     </span>
   `;
 }
+
 
 /* ============================================================
    SIGNAL CLASS
    ============================================================ */
 
-function sigClass(s) {
+function sigClass(signal) {
 
-  if (s === "BUY") {
+  if (signal === "BUY") {
     return "signal-buy";
   }
 
-  if (s === "SELL") {
+  if (signal === "SELL") {
     return "signal-sell";
   }
 
   return "signal-neutral";
 }
 
+
 /* ============================================================
    SIGNAL BADGE
    ============================================================ */
 
-function signalBadge(s) {
+function signalBadge(signal) {
 
-  const value = s || "NEUTRAL";
+  const s =
+    signal || "NEUTRAL";
 
   let icon = "•";
 
-  if (value === "BUY") {
+  if (s === "BUY") {
     icon = "▲";
   }
 
-  if (value === "SELL") {
+  if (s === "SELL") {
     icon = "▼";
   }
 
   return `
-    <span class="signal-badge ${sigClass(value)}">
-      ${icon}&nbsp; ${value}
+    <span class="signal-badge ${sigClass(s)}">
+      ${icon}&nbsp;${s}
     </span>
   `;
 }
+
 
 /* ============================================================
    SCORE BADGE
@@ -1095,22 +1056,27 @@ function scoreBadge(score) {
     return "—";
   }
 
-  const value = Number(score);
+  const value =
+    Number(score);
 
-  let cls = "score-mid";
+  let cls =
+    "score-mid";
 
   if (value >= 70) {
     cls = "score-high";
-  } else if (value <= 30) {
+  }
+
+  if (value <= 30) {
     cls = "score-low";
   }
 
   return `
     <span class="score ${cls}">
-      ${f(value, 0)}
+      ${f(value,0)}
     </span>
   `;
 }
+
 
 /* ============================================================
    CONFIRMATION BADGE
@@ -1126,17 +1092,21 @@ function confirmationBadge(conf) {
     return "—";
   }
 
-  const value = Number(conf);
+  const value =
+    Number(conf);
 
-  let cls = "confirmation-low";
+  let cls =
+    "confirmation-low";
 
   if (value >= 7) {
 
-    cls = "confirmation-strong";
+    cls =
+      "confirmation-strong";
 
   } else if (value >= 5) {
 
-    cls = "confirmation-medium";
+    cls =
+      "confirmation-medium";
   }
 
   return `
@@ -1146,11 +1116,12 @@ function confirmationBadge(conf) {
   `;
 }
 
+
 /* ============================================================
-   INDICATOR VALUE COLOR
+   RSI
    ============================================================ */
 
-function coloredIndicator(value, type) {
+function rsiDisplay(value) {
 
   if (
     value === null ||
@@ -1160,37 +1131,42 @@ function coloredIndicator(value, type) {
     return "—";
   }
 
-  const v = Number(value);
+  const v =
+    Number(value);
 
-  if (type === "rsi") {
-
-    if (v >= 50) {
-
-      return `
-        <span class="indicator-buy">
-          ${f(v, 2)}
-        </span>
-      `;
-    }
+  if (v >= 50) {
 
     return `
-      <span class="indicator-sell">
-        ${f(v, 2)}
+      <span class="indicator-buy">
+        ${f(v,2)}
       </span>
     `;
   }
 
-  return f(v, 6);
+  return `
+    <span class="indicator-sell">
+      ${f(v,2)}
+    </span>
+  `;
 }
 
+
 /* ============================================================
-   MACD DISPLAY
+   MACD
+   ------------------------------------------------------------
+   IMPORTANT:
+   Backend structure:
+   x.wave.macd
+   x.wave.macd_signal
    ============================================================ */
 
 function macdDisplay(w) {
 
-  const macd = w?.macd;
-  const signal = w?.macd_signal;
+  const macd =
+    w?.macd;
+
+  const signal =
+    w?.macd_signal;
 
   if (
     macd === null ||
@@ -1208,19 +1184,27 @@ function macdDisplay(w) {
 
   return `
     <span class="${cls}">
-      ${f(macd, 6)}
+      ${f(macd,6)}
     </span>
   `;
 }
 
+
 /* ============================================================
-   STOCH DISPLAY
+   STOCHASTIC
+   ------------------------------------------------------------
+   Backend structure:
+   x.wave.stoch_k
+   x.wave.stoch_d
    ============================================================ */
 
 function stochDisplay(w) {
 
-  const k = w?.stoch_k;
-  const d = w?.stoch_d;
+  const k =
+    w?.stoch_k;
+
+  const d =
+    w?.stoch_d;
 
   if (
     k === null ||
@@ -1238,13 +1222,14 @@ function stochDisplay(w) {
 
   return `
     <span class="${cls}">
-      ${f(k, 1)} / ${f(d, 1)}
+      ${f(k,1)} / ${f(d,1)}
     </span>
   `;
 }
 
+
 /* ============================================================
-   HEIKIN ASHI DISPLAY
+   HEIKIN ASHI
    ============================================================ */
 
 function haDisplay(ha) {
@@ -1274,12 +1259,12 @@ function haDisplay(ha) {
   return "—";
 }
 
+
 /* ============================================================
    SAFE S/R
    ------------------------------------------------------------
-   UI ONLY:
-   Does not modify scanner calculations.
-   It prevents invalid zero values from being displayed.
+   UI ONLY.
+   Does NOT change scanner calculations.
    ============================================================ */
 
 function safeSR(value) {
@@ -1294,11 +1279,12 @@ function safeSR(value) {
     return "—";
   }
 
-  return f(value, 8);
+  return f(value,8);
 }
 
+
 /* ============================================================
-   TRADE PLAN DISPLAY
+   TRADE PLAN VALUE
    ============================================================ */
 
 function planValue(value, cls) {
@@ -1314,13 +1300,14 @@ function planValue(value, cls) {
 
   return `
     <span class="${cls}">
-      ${f(value, 8)}
+      ${f(value,8)}
     </span>
   `;
 }
 
+
 /* ============================================================
-   R:R DISPLAY
+   R:R
    ============================================================ */
 
 function rrDisplay(value) {
@@ -1328,6 +1315,7 @@ function rrDisplay(value) {
   if (
     value === null ||
     value === undefined ||
+    value === "" ||
     Number.isNaN(Number(value))
   ) {
     return "—";
@@ -1335,10 +1323,215 @@ function rrDisplay(value) {
 
   return `
     <span class="rr-value">
-      1:${f(value, 2)}
+      1:${f(value,2)}
     </span>
   `;
 }
+
+
+/* ============================================================
+   FILTER BUTTON STATE
+   ============================================================ */
+
+function updateFilterButtons() {
+
+  const buttons = {
+
+    ALL:
+      $("filterAll"),
+
+    BUY:
+      $("filterBuy"),
+
+    SELL:
+      $("filterSell"),
+
+    NEUTRAL:
+      $("filterNeutral")
+  };
+
+  Object.entries(buttons).forEach(
+    ([key,button]) => {
+
+      if (!button) {
+        return;
+      }
+
+      button.classList.toggle(
+        "active",
+        activeFilter === key
+      );
+
+    }
+  );
+}
+
+
+/* ============================================================
+   SET FILTER
+   ------------------------------------------------------------
+   THIS WAS THE MISSING FUNCTION.
+   ============================================================ */
+
+function setFilter(filter) {
+
+  const allowed = [
+    "ALL",
+    "BUY",
+    "SELL",
+    "NEUTRAL"
+  ];
+
+  if (!allowed.includes(filter)) {
+    filter = "ALL";
+  }
+
+  activeFilter =
+    filter;
+
+  updateFilterButtons();
+
+  renderLatest();
+}
+
+
+/* ============================================================
+   SEARCH LISTENER
+   ============================================================ */
+
+function setupSearch() {
+
+  const input =
+    $("searchInput");
+
+  if (!input) {
+    return;
+  }
+
+  input.addEventListener(
+    "input",
+    () => {
+
+      searchText =
+        input.value
+          .trim()
+          .toUpperCase();
+
+      renderLatest();
+
+    }
+  );
+}
+
+
+/* ============================================================
+   FILTER MARKET DATA
+   ------------------------------------------------------------ */
+
+function filterMarkets(markets) {
+
+  return markets.filter(
+    market => {
+
+      const symbol =
+        String(
+          market.symbol || ""
+        ).toUpperCase();
+
+      const signal =
+        String(
+          market.indicators?.signal ||
+          "NEUTRAL"
+        ).toUpperCase();
+
+      /* ------------------------------------------------------
+         SEARCH
+         ------------------------------------------------------ */
+
+      const matchesSearch =
+        !searchText ||
+        symbol.includes(searchText);
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      /* ------------------------------------------------------
+         SIGNAL FILTER
+         ------------------------------------------------------ */
+
+      if (
+        activeFilter !== "ALL" &&
+        signal !== activeFilter
+      ) {
+        return false;
+      }
+
+      return true;
+
+    }
+  );
+}
+
+
+/* ============================================================
+   FILTER COUNT
+   ------------------------------------------------------------ */
+
+function updateFilterCount(
+  total,
+  visible
+) {
+
+  let count =
+    document.getElementById(
+      "filterCount"
+    );
+
+  if (!count) {
+
+    const title =
+      document.querySelector(
+        ".scanner-toolbar"
+      );
+
+    if (title) {
+
+      count =
+        document.createElement(
+          "span"
+        );
+
+      count.id =
+        "filterCount";
+
+      title.appendChild(count);
+    }
+  }
+
+  if (count) {
+
+    count.textContent =
+      `${visible} / ${total}`;
+  }
+}
+
+
+/* ============================================================
+   RENDER LATEST DATA
+   ============================================================ */
+
+function renderLatest() {
+
+  if (!latestData) {
+    return;
+  }
+
+  render(
+    latestData
+  );
+}
+
 
 /* ============================================================
    MAIN RENDER
@@ -1350,6 +1543,9 @@ function render(j) {
     return;
   }
 
+  latestData =
+    j;
+
   /* ----------------------------------------------------------
      STATUS
      ---------------------------------------------------------- */
@@ -1357,6 +1553,7 @@ function render(j) {
   if (j.status) {
 
     if ($("coins")) {
+
       $("coins").textContent =
         j.status.coins ?? "—";
     }
@@ -1375,7 +1572,11 @@ function render(j) {
 
       $("dot").className =
         "dot " +
-        (j.status.ws_connected ? "ok" : "");
+        (
+          j.status.ws_connected
+            ? "ok"
+            : ""
+        );
     }
 
     if ($("st")) {
@@ -1387,22 +1588,26 @@ function render(j) {
     }
   }
 
+
   /* ----------------------------------------------------------
-     TIMEFRAMES
+     SETTINGS / TIMEFRAMES
      ---------------------------------------------------------- */
 
   if (j.settings) {
 
     if ($("wave")) {
+
       $("wave").textContent =
         j.settings.wave_tf;
     }
 
     if ($("tide")) {
+
       $("tide").textContent =
         j.settings.tide_tf;
     }
   }
+
 
   /* ----------------------------------------------------------
      MARKET DATA
@@ -1413,366 +1618,328 @@ function render(j) {
       ? j.markets
       : [];
 
+
   /* ----------------------------------------------------------
-     SORT
-     ----------------------------------------------------------
-     Same sorting logic:
-     score descending.
+     FILTER MARKETS
      ---------------------------------------------------------- */
 
-  const a = [...markets].sort(
-    (x, y) =>
-      (y.indicators?.score ?? -1) -
-      (x.indicators?.score ?? -1)
+  const filtered =
+    filterMarkets(markets);
+
+
+  /* ----------------------------------------------------------
+     COUNT
+     ---------------------------------------------------------- */
+
+  updateFilterCount(
+    markets.length,
+    filtered.length
   );
 
+
   /* ----------------------------------------------------------
-     EMPTY STATE
+     EMPTY
      ---------------------------------------------------------- */
 
-  if (!a.length) {
+  if (!filtered.length) {
 
     $("rows").innerHTML = `
+
       <tr>
+
         <td
-          colspan="29"
-          style="
-            text-align:center;
-            padding:35px;
-            color:#8795a8;
-          "
+          colspan="28"
+          class="filter-empty"
         >
-          Waiting for scanner data...
+
+          ${
+            markets.length
+              ? "🔎 No coins match the current search/filter."
+              : "Waiting for scanner data..."
+          }
+
         </td>
+
       </tr>
+
     `;
 
     return;
   }
 
+
+  /* ----------------------------------------------------------
+     SORT
+     ----------------------------------------------------------
+     SAME SORTING AS ORIGINAL:
+     SCORE DESCENDING
+     ---------------------------------------------------------- */
+
+  const a =
+    [...filtered].sort(
+      (x,y) =>
+        (y.indicators?.score ?? -1) -
+        (x.indicators?.score ?? -1)
+    );
+
+
   /* ----------------------------------------------------------
      BUILD TABLE
      ---------------------------------------------------------- */
 
-  $("rows").innerHTML = a.map((m, i) => {
-
-    const x =
-      m.indicators || {};
-
-    const w =
-      x.wave || {};
-
-    const ha =
-      x.ha || {};
-
-    const sr =
-      x.sr || {};
-
-    const p =
-      x.plan || {};
-
-    const s =
-      x.signal || "NEUTRAL";
-
-    /* --------------------------------------------------------
-       CONFIRMATIONS
-       -------------------------------------------------------- */
-
-    const conf =
-      s === "BUY"
-        ? (x.buy_confirmations ?? 0)
-        : s === "SELL"
-          ? (x.sell_confirmations ?? 0)
-          : Math.max(
-              x.buy_confirmations || 0,
-              x.sell_confirmations || 0
-            );
-
-    /* --------------------------------------------------------
-       VOLUME
-       -------------------------------------------------------- */
-
-    const volume =
-      f(m.volume, 0);
+  $("rows").innerHTML =
+    a.map(
+      (m,i) => {
 
-    /* --------------------------------------------------------
-       OI
-       -------------------------------------------------------- */
+        const x =
+          m.indicators || {};
 
-    const oi =
-      f(m.oi, 0);
+        const w =
+          x.wave || {};
 
-    /* --------------------------------------------------------
-       RSI
-       -------------------------------------------------------- */
+        const ha =
+          x.ha || {};
 
-    const rsi =
-      coloredIndicator(
-        w.rsi,
-        "rsi"
-      );
+        const sr =
+          x.sr || {};
 
-    /* --------------------------------------------------------
-       MACD
-       --------------------------------------------------------
-       Correct backend path:
-       x.wave.macd
-       x.wave.macd_signal
-       -------------------------------------------------------- */
+        const p =
+          x.plan || {};
 
-    const macd =
-      macdDisplay(w);
+        const s =
+          x.signal || "NEUTRAL";
 
-    /* --------------------------------------------------------
-       STOCHASTIC
-       --------------------------------------------------------
-       Correct backend path:
-       x.wave.stoch_k
-       x.wave.stoch_d
-       -------------------------------------------------------- */
 
-    const stoch =
-      stochDisplay(w);
+        /* ----------------------------------------------------
+           CONFIRMATIONS
+           ---------------------------------------------------- */
 
-    /* --------------------------------------------------------
-       S/R
-       -------------------------------------------------------- */
+        const conf =
+          s === "BUY"
 
-    const s2 =
-      safeSR(sr.s2);
+            ? (x.buy_confirmations ?? 0)
 
-    const s1 =
-      safeSR(sr.s1);
+            : s === "SELL"
 
-    const r1 =
-      safeSR(sr.r1);
+              ? (x.sell_confirmations ?? 0)
 
-    const r2 =
-      safeSR(sr.r2);
+              : Math.max(
+                  x.buy_confirmations || 0,
+                  x.sell_confirmations || 0
+                );
 
-    /* --------------------------------------------------------
-       TRADE PLAN
-       -------------------------------------------------------- */
 
-    const entry =
-      s !== "NEUTRAL"
-        ? planValue(p.entry, "entry")
-        : "—";
+        /* ----------------------------------------------------
+           SIGNAL-SPECIFIC PLAN
+           ---------------------------------------------------- */
 
-    const sl =
-      s !== "NEUTRAL"
-        ? planValue(p.sl, "sl")
-        : "—";
+        const entry =
+          s !== "NEUTRAL"
+            ? planValue(
+                p.entry,
+                "entry"
+              )
+            : "—";
 
-    const tp1 =
-      s !== "NEUTRAL"
-        ? planValue(p.tp1, "tp")
-        : "—";
+        const sl =
+          s !== "NEUTRAL"
+            ? planValue(
+                p.sl,
+                "sl"
+              )
+            : "—";
 
-    const tp2 =
-      s !== "NEUTRAL"
-        ? planValue(p.tp2, "tp")
-        : "—";
+        const tp1 =
+          s !== "NEUTRAL"
+            ? planValue(
+                p.tp1,
+                "tp"
+              )
+            : "—";
 
-    const rr =
-      s !== "NEUTRAL"
-        ? rrDisplay(p.rr)
-        : "—";
+        const tp2 =
+          s !== "NEUTRAL"
+            ? planValue(
+                p.tp2,
+                "tp"
+              )
+            : "—";
 
-    /* --------------------------------------------------------
-       ROW
-       -------------------------------------------------------- */
+        const rr =
+          s !== "NEUTRAL"
+            ? rrDisplay(
+                p.rr
+              )
+            : "—";
 
-    return `
 
-      <tr>
+        /* ----------------------------------------------------
+           RETURN ROW
+           ---------------------------------------------------- */
 
-        <!-- Rank -->
+        return `
 
-        <td>
-          <strong>${i + 1}</strong>
-        </td>
+          <tr>
 
-        <!-- Coin -->
+            <td>
+              <strong>${i + 1}</strong>
+            </td>
 
-        <td>
-          <span class="coin-name">
-            ${m.symbol ?? "—"}
-          </span>
-        </td>
 
-        <!-- Price -->
+            <td>
+              <span class="coin-name">
+                ${m.symbol ?? "—"}
+              </span>
+            </td>
 
-        <td>
-          <strong>
-            ${f(m.price, 10)}
-          </strong>
-        </td>
 
-        <!-- 24H CHANGE -->
+            <td>
+              <strong>
+                ${f(m.price,10)}
+              </strong>
+            </td>
 
-        <td>
-          ${formatChange(m.change)}
-        </td>
 
-        <!-- Volume -->
+            <td>
+              ${formatChange(m.change)}
+            </td>
 
-        <td>
-          ${volume}
-        </td>
 
-        <!-- Volume Rank -->
+            <td>
+              ${f(m.volume,0)}
+            </td>
 
-        <td>
-          ${m.volume_rank ?? "—"}
-        </td>
 
-        <!-- OI -->
+            <td>
+              ${m.volume_rank ?? "—"}
+            </td>
 
-        <td>
-          ${oi}
-        </td>
 
-        <!-- Wave TF -->
+            <td>
+              ${f(m.oi,0)}
+            </td>
 
-        <td>
-          ${j.settings?.wave_tf ?? "—"}
-        </td>
 
-        <!-- Tide TF -->
+            <td>
+              ${j.settings?.wave_tf ?? "—"}
+            </td>
 
-        <td>
-          ${j.settings?.tide_tf ?? "—"}
-        </td>
 
-        <!-- Tide EMA 9 -->
+            <td>
+              ${j.settings?.tide_tf ?? "—"}
+            </td>
 
-        <td>
-          ${f(x.tide9, 8)}
-        </td>
 
-        <!-- Tide EMA 20 -->
+            <td>
+              ${f(x.tide9,8)}
+            </td>
 
-        <td>
-          ${f(x.tide20, 8)}
-        </td>
 
-        <!-- RSI -->
+            <td>
+              ${f(x.tide20,8)}
+            </td>
 
-        <td>
-          ${rsi}
-        </td>
 
-        <!-- MACD -->
+            <td>
+              ${rsiDisplay(w.rsi)}
+            </td>
 
-        <td>
-          ${macd}
-        </td>
 
-        <!-- STOCH -->
+            <td>
+              ${macdDisplay(w)}
+            </td>
 
-        <td>
-          ${stoch}
-        </td>
 
-        <!-- SCORE -->
+            <td>
+              ${stochDisplay(w)}
+            </td>
 
-        <td>
-          ${scoreBadge(x.score)}
-        </td>
 
-        <!-- SCORE RANK -->
+            <td>
+              ${scoreBadge(x.score)}
+            </td>
 
-        <td>
-          ${x.score_rank ?? "—"}
-        </td>
 
-        <!-- SIGNAL -->
+            <td>
+              ${x.score_rank ?? "—"}
+            </td>
 
-        <td>
-          ${signalBadge(s)}
-        </td>
 
-        <!-- CONFIRMATIONS -->
+            <td>
+              ${signalBadge(s)}
+            </td>
 
-        <td>
-          ${confirmationBadge(conf)}
-        </td>
 
-        <!-- HEIKIN ASHI -->
+            <td>
+              ${confirmationBadge(conf)}
+            </td>
 
-        <td>
-          ${haDisplay(ha)}
-        </td>
 
-        <!-- S2 -->
+            <td>
+              ${haDisplay(ha)}
+            </td>
 
-        <td>
-          <span class="support">
-            ${s2}
-          </span>
-        </td>
 
-        <!-- S1 -->
+            <td>
+              <span class="support">
+                ${safeSR(sr.s2)}
+              </span>
+            </td>
 
-        <td>
-          <span class="support">
-            ${s1}
-          </span>
-        </td>
 
-        <!-- R1 -->
+            <td>
+              <span class="support">
+                ${safeSR(sr.s1)}
+              </span>
+            </td>
 
-        <td>
-          <span class="resistance">
-            ${r1}
-          </span>
-        </td>
 
-        <!-- R2 -->
+            <td>
+              <span class="resistance">
+                ${safeSR(sr.r1)}
+              </span>
+            </td>
 
-        <td>
-          <span class="resistance">
-            ${r2}
-          </span>
-        </td>
 
-        <!-- ENTRY -->
+            <td>
+              <span class="resistance">
+                ${safeSR(sr.r2)}
+              </span>
+            </td>
 
-        <td>
-          ${entry}
-        </td>
 
-        <!-- SL -->
+            <td>
+              ${entry}
+            </td>
 
-        <td>
-          ${sl}
-        </td>
 
-        <!-- TP1 -->
+            <td>
+              ${sl}
+            </td>
 
-        <td>
-          ${tp1}
-        </td>
 
-        <!-- TP2 -->
+            <td>
+              ${tp1}
+            </td>
 
-        <td>
-          ${tp2}
-        </td>
 
-        <!-- R:R -->
+            <td>
+              ${tp2}
+            </td>
 
-        <td>
-          ${rr}
-        </td>
 
-      </tr>
+            <td>
+              ${rr}
+            </td>
 
-    `;
+          </tr>
 
-  }).join("");
+        `;
+
+      }
+    ).join("");
 }
+
 
 /* ============================================================
    INITIAL API LOAD
@@ -1783,7 +1950,9 @@ async function loadInitial() {
   try {
 
     const response =
-      await fetch("/api/status");
+      await fetch(
+        "/api/status"
+      );
 
     if (!response.ok) {
 
@@ -1795,13 +1964,21 @@ async function loadInitial() {
     const data =
       await response.json();
 
+    latestData =
+      data;
+
     if (data.settings) {
-      fill(data.settings);
+
+      fill(
+        data.settings
+      );
     }
 
-    render(data);
+    render(
+      data
+    );
 
-  } catch (e) {
+  } catch(e) {
 
     console.error(
       "Initial API load failed:",
@@ -1816,13 +1993,10 @@ async function loadInitial() {
   }
 }
 
+
 /* ============================================================
-   WEBSOCKET CONNECTION
+   WEBSOCKET
    ============================================================ */
-
-let socket = null;
-
-let reconnectTimer = null;
 
 function connect() {
 
@@ -1840,7 +2014,14 @@ function connect() {
       "/ws";
 
     socket =
-      new WebSocket(url);
+      new WebSocket(
+        url
+      );
+
+
+    /* --------------------------------------------------------
+       CONNECTED
+       -------------------------------------------------------- */
 
     socket.onopen = () => {
 
@@ -1861,66 +2042,98 @@ function connect() {
       }
     };
 
-    socket.onmessage = event => {
 
-      try {
+    /* --------------------------------------------------------
+       MESSAGE
+       -------------------------------------------------------- */
 
-        const data =
-          JSON.parse(event.data);
+    socket.onmessage =
+      event => {
 
-        render(data);
+        try {
 
-      } catch (e) {
+          const data =
+            JSON.parse(
+              event.data
+            );
+
+          /*
+           * IMPORTANT:
+           * render() re-applies the current
+           * search and BUY/SELL/NEUTRAL filter.
+           */
+
+          render(
+            data
+          );
+
+        } catch(e) {
+
+          console.error(
+            "WebSocket JSON error:",
+            e
+          );
+        }
+      };
+
+
+    /* --------------------------------------------------------
+       ERROR
+       -------------------------------------------------------- */
+
+    socket.onerror =
+      error => {
 
         console.error(
-          "WebSocket JSON error:",
-          e
+          "WebSocket error:",
+          error
         );
-      }
-    };
 
-    socket.onerror = error => {
+        if (socket) {
+          socket.close();
+        }
+      };
 
-      console.error(
-        "WebSocket error:",
-        error
-      );
 
-      if (socket) {
-        socket.close();
-      }
-    };
+    /* --------------------------------------------------------
+       CLOSED
+       -------------------------------------------------------- */
 
-    socket.onclose = () => {
+    socket.onclose =
+      () => {
 
-      console.warn(
-        "WebSocket disconnected. Reconnecting..."
-      );
-
-      if ($("st")) {
-
-        $("st").textContent =
-          "Reconnecting...";
-      }
-
-      if ($("dot")) {
-
-        $("dot").className =
-          "dot";
-      }
-
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
-
-      reconnectTimer =
-        setTimeout(
-          connect,
-          3000
+        console.warn(
+          "WebSocket disconnected. Reconnecting..."
         );
-    };
 
-  } catch (e) {
+        if ($("st")) {
+
+          $("st").textContent =
+            "Reconnecting...";
+        }
+
+        if ($("dot")) {
+
+          $("dot").className =
+            "dot";
+        }
+
+        if (reconnectTimer) {
+
+          clearTimeout(
+            reconnectTimer
+          );
+        }
+
+        reconnectTimer =
+          setTimeout(
+            connect,
+            3000
+          );
+      };
+
+
+  } catch(e) {
 
     console.error(
       "WebSocket connection failed:",
@@ -1935,26 +2148,48 @@ function connect() {
   }
 }
 
+
 /* ============================================================
-   START APPLICATION
+   INITIALIZE FILTERS
+   ============================================================ */
+
+updateFilterButtons();
+
+setupSearch();
+
+
+/* ============================================================
+   INITIAL LOAD
    ============================================================ */
 
 loadInitial();
 
-connect();
 
 /* ============================================================
-   OPTIONAL GLOBAL SAVE FUNCTION
-   ------------------------------------------------------------
-   Keeps compatibility with:
-   onclick="save()"
-   in index.html
+   START WEBSOCKET
    ============================================================ */
 
-window.save = save;
+connect();
+
 
 /* ============================================================
-   DEBUG
+   GLOBAL FUNCTIONS
+   ------------------------------------------------------------
+   Required by index.html:
+   onclick="save()"
+   onclick="setFilter('BUY')"
+   etc.
+   ============================================================ */
+
+window.save =
+  save;
+
+window.setFilter =
+  setFilter;
+
+
+/* ============================================================
+   CONSOLE
    ============================================================ */
 
 console.log(
@@ -1963,6 +2198,6 @@ console.log(
 );
 
 console.log(
-  "%cProfessional frontend loaded",
+  "%cProfessional frontend + Search + Signal Filters loaded",
   "color:#8fa0b5;font-size:12px"
 );
