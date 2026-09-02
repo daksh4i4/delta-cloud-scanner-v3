@@ -1,34 +1,12 @@
-"use strict";
-
-/* =========================================================
-   DELTA CLOUD SCANNER V3
-   FRONTEND
-   ========================================================= */
-
 const $ = id => document.getElementById(id);
 
 const TF = [
-  "1m",
-  "3m",
-  "5m",
-  "15m",
-  "30m",
-  "1h",
-  "2h",
-  "4h",
-  "6h",
-  "12h",
-  "1d",
-  "1w",
-  "1M"
+  "1m","3m","5m","15m","30m",
+  "1h","2h","4h","6h","12h",
+  "1d","1w","1M"
 ];
 
-/* =========================================================
-   SETTINGS DEFINITIONS
-   ========================================================= */
-
 const defs = [
-
   ["wave_tf","Wave TF","select"],
   ["tide_tf","Tide TF","select"],
 
@@ -67,1444 +45,856 @@ const defs = [
   ["slb","SL Buffer %","number"],
   ["mvr","Min Volume Ratio","number"],
   ["mc","Min Confirmations","number"]
-
 ];
 
-/* =========================================================
-   APPLICATION STATE
-   ========================================================= */
+for (const d of defs) {
 
-let scannerData = {
-  settings: {},
-  markets: [],
-  status: {}
-};
+  const label = document.createElement("label");
+  label.textContent = d[1];
 
-let currentFilter = "ALL";
-let searchTerm = "";
-let socket = null;
-let reconnectTimer = null;
-let rendering = false;
-
-/* =========================================================
-   BUILD SETTINGS UI
-   ========================================================= */
-
-function buildSettings(){
-
-  const container = $("settings");
-
-  if(!container){
-    return;
-  }
-
-  container.innerHTML = "";
-
-  for(const d of defs){
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "setting";
-
-    const label = document.createElement("label");
-
-    label.textContent = d[1];
-
-    const input = document.createElement(
-      d[2] === "select"
-        ? "select"
-        : "input"
-    );
-
-    input.id = d[0];
-
-    if(d[2] === "number"){
-
-      input.type = "number";
-      input.min = "0";
-
-      if(d[0] === "rr"){
-        input.step = "0.1";
-      }
-
-      if(d[0] === "slb"){
-        input.step = "0.05";
-      }
-
-      if(d[0] === "mvr"){
-        input.step = "0.1";
-      }
-
-    }
-
-    if(d[2] === "select"){
-
-      TF.forEach(t => {
-
-        const option =
-          document.createElement("option");
-
-        option.value = t;
-        option.textContent = t;
-
-        input.appendChild(option);
-
-      });
-
-    }
-
-    wrapper.appendChild(label);
-    wrapper.appendChild(input);
-
-    container.appendChild(wrapper);
-  }
-}
-
-/* =========================================================
-   SETTINGS
-   ========================================================= */
-
-function fill(s){
-
-  if(!s){
-    return;
-  }
-
-  setValue("wave_tf", s.wave_tf);
-  setValue("tide_tf", s.tide_tf);
-
-  setArray(
-    ["we1","we2","we3"],
-    s.wave_ema
+  const input = document.createElement(
+    d[2] === "select" ? "select" : "input"
   );
 
-  setArray(
-    ["te1","te2","te3"],
-    s.tide_ema
-  );
+  input.id = d[0];
 
-  setArray(
-    ["fe1","fe2"],
-    s.tide_filter_ema
-  );
-
-  setValue("rp", s.rsi_period);
-  setValue("rb", s.rsi_buy);
-  setValue("rs", s.rsi_sell);
-
-  setValue("mf", s.macd_fast);
-  setValue("ms", s.macd_slow);
-  setValue("mg", s.macd_signal);
-
-  setValue("sp", s.stoch_period);
-  setValue("sk", s.stoch_k);
-  setValue("sd", s.stoch_d);
-
-  setValue("vs", s.volume_sma);
-
-  setValue("bs", s.buy_score);
-  setValue("ss", s.sell_score);
-
-  setValue("srl", s.sr_lookback);
-  setValue("srp", s.sr_pivot);
-
-  setValue("rr", s.min_rr);
-  setValue("slb", s.sl_buffer_pct);
-  setValue("mvr", s.min_volume_ratio);
-  setValue("mc", s.min_signal_confirmations);
-}
-
-function setValue(id,value){
-
-  const el = $(id);
-
-  if(el && value !== undefined && value !== null){
-    el.value = value;
-  }
-}
-
-function setArray(ids,arr){
-
-  if(!Array.isArray(arr)){
-    return;
+  if (d[2] === "number") {
+    input.type = "number";
   }
 
-  ids.forEach((id,index) => {
-
-    setValue(
-      id,
-      arr[index]
-    );
-
-  });
-}
-
-/* =========================================================
-   SAVE SETTINGS
-   ========================================================= */
-
-async function save(){
-
-  const button = $("saveButton");
-
-  try{
-
-    const settings = {
-
-      wave_tf: $("wave_tf").value,
-      tide_tf: $("tide_tf").value,
-
-      wave_ema: [
-        n("we1"),
-        n("we2"),
-        n("we3")
-      ],
-
-      tide_ema: [
-        n("te1"),
-        n("te2"),
-        n("te3")
-      ],
-
-      tide_filter_ema: [
-        n("fe1"),
-        n("fe2")
-      ],
-
-      rsi_period: n("rp"),
-      rsi_buy: n("rb"),
-      rsi_sell: n("rs"),
-
-      macd_fast: n("mf"),
-      macd_slow: n("ms"),
-      macd_signal: n("mg"),
-
-      stoch_period: n("sp"),
-      stoch_k: n("sk"),
-      stoch_d: n("sd"),
-
-      volume_sma: n("vs"),
-
-      buy_score: n("bs"),
-      sell_score: n("ss"),
-
-      sr_lookback: n("srl"),
-      sr_pivot: n("srp"),
-
-      min_rr: n("rr"),
-      sl_buffer_pct: n("slb"),
-      min_volume_ratio: n("mvr"),
-      min_signal_confirmations: n("mc")
-
-    };
-
-    validateSettings(settings);
-
-    button.disabled = true;
-    button.textContent = "⏳ Saving...";
-
-    const response = await fetch(
-      "/api/settings",
-      {
-        method:"PUT",
-        headers:{
-          "Content-Type":"application/json"
-        },
-        body:JSON.stringify(settings)
-      }
-    );
-
-    if(!response.ok){
-      throw new Error(
-        "Settings update failed: HTTP " +
-        response.status
-      );
-    }
-
-    const data =
-      await response.json();
-
-    scannerData.settings =
-      data.settings || settings;
-
-    fill(scannerData.settings);
-
-    showMessage(
-      "✅ Settings saved. New scan started."
-    );
-
-    updateHeader();
-
-  }catch(error){
-
-    console.error(
-      "Settings error:",
-      error
-    );
-
-    showMessage(
-      "❌ Save failed: " +
-      error.message
-    );
-
-  }finally{
-
-    button.disabled = false;
-    button.textContent = "💾 Save & Rescan";
-
+  if (d[0] === "rr") {
+    input.step = "0.1";
   }
-}
 
-/* =========================================================
-   VALIDATION
-   ========================================================= */
+  if (d[0] === "slb") {
+    input.step = "0.05";
+  }
 
-function validateSettings(s){
+  if (d[0] === "mvr") {
+    input.step = "0.1";
+  }
 
-  const arrays = [
-    s.wave_ema,
-    s.tide_ema,
-    s.tide_filter_ema
-  ];
+  if (d[2] === "select") {
 
-  arrays.forEach(arr => {
+    TF.forEach(t => {
 
-    arr.forEach(value => {
+      const option = document.createElement("option");
 
-      if(
-        !Number.isFinite(value) ||
-        value < 1
-      ){
-        throw new Error(
-          "EMA values must be positive numbers."
-        );
-      }
+      option.value = t;
+      option.textContent = t;
 
+      input.appendChild(option);
     });
+  }
 
+  label.appendChild(input);
+
+  $("settings").appendChild(label);
+}
+
+
+/* ============================================================
+   SETTINGS
+============================================================ */
+
+function fill(s) {
+
+  if (!s) return;
+
+  $("wave_tf").value = s.wave_tf ?? "15m";
+  $("tide_tf").value = s.tide_tf ?? "1h";
+
+  ["we1","we2","we3"].forEach((id,i) => {
+    $(id).value = s.wave_ema?.[i] ?? "";
   });
 
-  if(
-    s.buy_score < 0 ||
-    s.buy_score > 100
-  ){
-    throw new Error(
-      "BUY score must be between 0 and 100."
-    );
-  }
+  ["te1","te2","te3"].forEach((id,i) => {
+    $(id).value = s.tide_ema?.[i] ?? "";
+  });
 
-  if(
-    s.sell_score < 0 ||
-    s.sell_score > 100
-  ){
-    throw new Error(
-      "SELL score must be between 0 and 100."
-    );
-  }
+  ["fe1","fe2"].forEach((id,i) => {
+    $(id).value = s.tide_filter_ema?.[i] ?? "";
+  });
 
-  if(
-    s.sell_score >= s.buy_score
-  ){
-    throw new Error(
-      "SELL score should be lower than BUY score."
-    );
-  }
+  $("rp").value = s.rsi_period ?? "";
+  $("rb").value = s.rsi_buy ?? "";
+  $("rs").value = s.rsi_sell ?? "";
 
-  if(
-    s.min_rr <= 0
-  ){
-    throw new Error(
-      "Minimum R:R must be greater than 0."
-    );
-  }
+  $("mf").value = s.macd_fast ?? "";
+  $("ms").value = s.macd_slow ?? "";
+  $("mg").value = s.macd_signal ?? "";
+
+  $("sp").value = s.stoch_period ?? "";
+  $("sk").value = s.stoch_k ?? "";
+  $("sd").value = s.stoch_d ?? "";
+
+  $("vs").value = s.volume_sma ?? "";
+
+  $("bs").value = s.buy_score ?? "";
+  $("ss").value = s.sell_score ?? "";
+
+  $("srl").value = s.sr_lookback ?? "";
+  $("srp").value = s.sr_pivot ?? "";
+
+  $("rr").value = s.min_rr ?? "";
+  $("slb").value = s.sl_buffer_pct ?? "";
+  $("mvr").value = s.min_volume_ratio ?? "";
+  $("mc").value = s.min_signal_confirmations ?? "";
 }
 
-/* =========================================================
-   HELPERS
-   ========================================================= */
 
-function n(id){
+const n = id => Number($(id).value);
 
-  const value =
-    Number(
-      $(id).value
-    );
 
-  if(
-    !Number.isFinite(value) ||
-    value < 0
-  ){
-    throw new Error(
-      "All numeric settings must contain valid numbers."
-    );
-  }
+/* ============================================================
+   SAVE SETTINGS
+============================================================ */
 
-  return value;
-}
+async function save() {
 
-function f(value, decimals = 6){
+  const s = {
 
-  if(
-    value === null ||
-    value === undefined ||
-    value === "" ||
-    !Number.isFinite(Number(value))
-  ){
-    return "—";
-  }
+    wave_tf: $("wave_tf").value,
+    tide_tf: $("tide_tf").value,
 
-  return Number(value)
-    .toLocaleString(
-      undefined,
-      {
-        maximumFractionDigits:decimals
-      }
-    );
-}
+    wave_ema: [
+      n("we1"),
+      n("we2"),
+      n("we3")
+    ],
 
-/*
- * Price formatter.
- * Keeps small crypto prices readable without
- * showing excessive decimal places.
- */
+    tide_ema: [
+      n("te1"),
+      n("te2"),
+      n("te3")
+    ],
 
-function formatPrice(value){
+    tide_filter_ema: [
+      n("fe1"),
+      n("fe2")
+    ],
 
-  const n =
-    Number(value);
+    rsi_period: n("rp"),
+    rsi_buy: n("rb"),
+    rsi_sell: n("rs"),
 
-  if(
-    !Number.isFinite(n)
-  ){
-    return "—";
-  }
+    macd_fast: n("mf"),
+    macd_slow: n("ms"),
+    macd_signal: n("mg"),
 
-  const abs =
-    Math.abs(n);
+    stoch_period: n("sp"),
+    stoch_k: n("sk"),
+    stoch_d: n("sd"),
 
-  if(abs >= 100000){
-    return n.toLocaleString(
-      undefined,
-      {
-        maximumFractionDigits:2
-      }
-    );
-  }
+    volume_sma: n("vs"),
 
-  if(abs >= 1000){
-    return n.toLocaleString(
-      undefined,
-      {
-        maximumFractionDigits:3
-      }
-    );
-  }
+    buy_score: n("bs"),
+    sell_score: n("ss"),
 
-  if(abs >= 100){
-    return n.toFixed(2);
-  }
+    sr_lookback: n("srl"),
+    sr_pivot: n("srp"),
 
-  if(abs >= 10){
-    return n.toFixed(3);
-  }
-
-  if(abs >= 1){
-    return n.toFixed(4);
-  }
-
-  if(abs >= 0.1){
-    return n.toFixed(5);
-  }
-
-  if(abs >= 0.01){
-    return n.toFixed(6);
-  }
-
-  if(abs >= 0.001){
-    return n.toFixed(7);
-  }
-
-  return n.toPrecision(6);
-}
-
-function formatIndicator(value){
-
-  const n =
-    Number(value);
-
-  if(
-    !Number.isFinite(n)
-  ){
-    return "—";
-  }
-
-  return n.toFixed(2);
-}
-
-function formatCompact(value){
-
-  const n =
-    Number(value);
-
-  if(
-    !Number.isFinite(n)
-  ){
-    return "—";
-  }
-
-  const abs =
-    Math.abs(n);
-
-  if(abs >= 1e12){
-    return (n / 1e12).toFixed(2) + "T";
-  }
-
-  if(abs >= 1e9){
-    return (n / 1e9).toFixed(2) + "B";
-  }
-
-  if(abs >= 1e6){
-    return (n / 1e6).toFixed(2) + "M";
-  }
-
-  if(abs >= 1e3){
-    return (n / 1e3).toFixed(2) + "K";
-  }
-
-  return n.toFixed(2);
-}
-
-function formatRR(value){
-
-  const n =
-    Number(value);
-
-  if(
-    !Number.isFinite(n) ||
-    n <= 0
-  ){
-    return "—";
-  }
-
-  return "1:" +
-    n.toFixed(2);
-}
-
-function escapeHTML(value){
-
-  return String(
-    value ?? ""
-  )
-  .replace(/&/g,"&amp;")
-  .replace(/</g,"&lt;")
-  .replace(/>/g,"&gt;")
-  .replace(/"/g,"&quot;")
-  .replace(/'/g,"&#039;");
-}
-
-function safeNumber(value){
-
-  const n =
-    Number(value);
-
-  return Number.isFinite(n)
-    ? n
-    : null;
-}
-
-/* =========================================================
-   SIGNAL
-   ========================================================= */
-
-function getSignal(x){
-
-  const s =
-    String(
-      x?.signal || "NEUTRAL"
-    ).toUpperCase();
-
-  if(
-    s === "BUY" ||
-    s === "SELL"
-  ){
-    return s;
-  }
-
-  return "NEUTRAL";
-}
-
-function signalBadge(signal){
-
-  if(signal === "BUY"){
-    return '<span class="signal buy">🟢 BUY</span>';
-  }
-
-  if(signal === "SELL"){
-    return '<span class="signal sell">🔴 SELL</span>';
-  }
-
-  return '<span class="signal neutral">⚪ NEUTRAL</span>';
-}
-
-/* =========================================================
-   SCORE
-   ========================================================= */
-
-function scoreHTML(score){
-
-  const n =
-    safeNumber(score);
-
-  if(n === null){
-    return '<span class="dash">—</span>';
-  }
-
-  let cls = "score-mid";
-
-  if(n >= 70){
-    cls = "score-high";
-  }
-
-  if(n <= 30){
-    cls = "score-low";
-  }
-
-  return `
-    <span class="score ${cls}">
-      ${n.toFixed(0)}
-    </span>
-  `;
-}
-
-/* =========================================================
-   HA
-   ========================================================= */
-
-function haHTML(ha){
-
-  if(ha?.bull){
-    return '<span class="ha-bull">▲ Bull</span>';
-  }
-
-  if(ha?.bear){
-    return '<span class="ha-bear">▼ Bear</span>';
-  }
-
-  return '<span class="dash">—</span>';
-}
-
-/* =========================================================
-   R:R
-   ========================================================= */
-
-function rrHTML(value){
-
-  const n =
-    safeNumber(value);
-
-  if(
-    n === null ||
-    n <= 0
-  ){
-    return '<span class="dash">—</span>';
-  }
-
-  const cls =
-    n >= 2
-      ? "rr-good"
-      : "rr-low";
-
-  return `
-    <span class="${cls}">
-      1:${n.toFixed(2)}
-    </span>
-  `;
-}
-
-/* =========================================================
-   CONFIRMATIONS
-   ========================================================= */
-
-function getConfirmations(x,signal){
-
-  if(signal === "BUY"){
-    return Number(
-      x.buy_confirmations || 0
-    );
-  }
-
-  if(signal === "SELL"){
-    return Number(
-      x.sell_confirmations || 0
-    );
-  }
-
-  return Math.max(
-    Number(x.buy_confirmations || 0),
-    Number(x.sell_confirmations || 0)
-  );
-}
-
-/* =========================================================
-   TABLE ROW
-   ========================================================= */
-
-function makeRow(m,index){
-
-  const x =
-    m.indicators || {};
-
-  const w =
-    x.wave || {};
-
-  const ha =
-    x.ha || {};
-
-  const sr =
-    x.sr || {};
-
-  const plan =
-    x.plan || {};
-
-  const signal =
-    getSignal(x);
-
-  const conf =
-    getConfirmations(
-      x,
-      signal
-    );
-
-  const price =
-    safeNumber(m.price);
-
-  const change =
-    safeNumber(m.change);
-
-  const rr =
-    safeNumber(plan.rr);
-
-  const hasPlan =
-    signal !== "NEUTRAL" &&
-    (
-      safeNumber(plan.entry) !== null ||
-      safeNumber(plan.sl) !== null ||
-      safeNumber(plan.tp1) !== null ||
-      safeNumber(plan.tp2) !== null
-    );
-
-  const planClass =
-    signal === "BUY"
-      ? "plan-buy"
-      : signal === "SELL"
-        ? "plan-sell"
-        : "";
-
-  const changeClass =
-    change === null
-      ? ""
-      : change > 0
-        ? "positive"
-        : change < 0
-          ? "negative"
-          : "";
-
-  const coin =
-    escapeHTML(
-      m.symbol || "—"
-    );
-
-  return `
-    <tr>
-
-      <td>${index + 1}</td>
-
-      <td>
-        <span class="coin">${coin}</span>
-      </td>
-
-      <td class="price">
-        ${formatPrice(price)}
-      </td>
-
-      <td class="${changeClass}">
-        ${
-          change === null
-            ? "—"
-            : (change > 0 ? "+" : "") +
-              change.toFixed(2) +
-              "%"
-        }
-      </td>
-
-      <td>
-        ${formatCompact(m.volume)}
-      </td>
-
-      <td>
-        ${f(m.volume_rank,0)}
-      </td>
-
-      <td>
-        ${formatCompact(m.oi)}
-      </td>
-
-      <td>
-        ${escapeHTML(
-          scannerData.settings.wave_tf || "—"
-        )}
-      </td>
-
-      <td>
-        ${escapeHTML(
-          scannerData.settings.tide_tf || "—"
-        )}
-      </td>
-
-      <td>
-        ${formatPrice(x.tide9)}
-      </td>
-
-      <td>
-        ${formatPrice(x.tide20)}
-      </td>
-
-      <td>
-        ${formatIndicator(w.rsi)}
-      </td>
-
-      <td>
-        ${formatIndicator(x.macd)}
-      </td>
-
-      <td>
-        ${formatIndicator(x.stoch_k)}
-        /
-        ${formatIndicator(x.stoch_d)}
-      </td>
-
-      <td>
-        ${scoreHTML(x.score)}
-      </td>
-
-      <td>
-        ${f(x.score_rank,0)}
-      </td>
-
-      <td>
-        ${signalBadge(signal)}
-      </td>
-
-      <td>
-        <strong>${conf}/8</strong>
-      </td>
-
-      <td>
-        ${haHTML(ha)}
-      </td>
-
-      <td>
-        ${formatPrice(sr.s2)}
-      </td>
-
-      <td>
-        ${formatPrice(sr.s1)}
-      </td>
-
-      <td>
-        ${formatPrice(sr.r1)}
-      </td>
-
-      <td>
-        ${formatPrice(sr.r2)}
-      </td>
-
-      <td class="${planClass}">
-        ${
-          hasPlan
-            ? formatPrice(plan.entry)
-            : "—"
-        }
-      </td>
-
-      <td class="${planClass}">
-        ${
-          hasPlan
-            ? formatPrice(plan.sl)
-            : "—"
-        }
-      </td>
-
-      <td class="${planClass}">
-        ${
-          hasPlan
-            ? formatPrice(plan.tp1)
-            : "—"
-        }
-      </td>
-
-      <td class="${planClass}">
-        ${
-          hasPlan
-            ? formatPrice(plan.tp2)
-            : "—"
-        }
-      </td>
-
-      <td>
-        ${
-          hasPlan
-            ? rrHTML(rr)
-            : '<span class="dash">—</span>'
-        }
-      </td>
-
-    </tr>
-  `;
-}
-
-/* =========================================================
-   FILTER + SEARCH
-   ========================================================= */
-
-function setFilter(filter){
-
-  currentFilter =
-    String(filter).toUpperCase();
-
-  updateFilterButtons();
-
-  renderTable();
-}
-
-function updateFilterButtons(){
-
-  const buttons = {
-    ALL:"filterAll",
-    BUY:"filterBuy",
-    SELL:"filterSell",
-    NEUTRAL:"filterNeutral"
+    min_rr: n("rr"),
+    sl_buffer_pct: n("slb"),
+    min_volume_ratio: n("mvr"),
+    min_signal_confirmations: n("mc")
   };
 
-  Object.keys(buttons)
-    .forEach(key => {
+  try {
 
-      const el =
-        $(buttons[key]);
-
-      if(!el){
-        return;
+    const r = await fetch(
+      "/api/settings",
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(s)
       }
+    );
 
-      el.classList.toggle(
-        "active",
-        currentFilter === key
+    const j = await r.json();
+
+    if (!r.ok) {
+      throw new Error(
+        j.error || "Server rejected settings"
       );
+    }
 
-    });
+    fill(j.settings);
+
+    $("msg").textContent =
+      "✅ Saved. New scan started.";
+
+    setTimeout(() => {
+      $("msg").textContent = "";
+    }, 3000);
+
+  } catch (e) {
+
+    console.error(e);
+
+    $("msg").textContent =
+      "❌ Save failed: " + e.message;
+  }
 }
 
-function applyFilters(markets){
 
-  const term =
-    searchTerm
+/* ============================================================
+   FORMATTING
+============================================================ */
+
+function f(x, d = 6) {
+
+  if (
+    x === null ||
+    x === undefined ||
+    x === "" ||
+    !Number.isFinite(Number(x))
+  ) {
+    return "—";
+  }
+
+  const v = Number(x);
+
+  if (v === 0) {
+    return "—";
+  }
+
+  return v.toLocaleString(
+    undefined,
+    {
+      maximumFractionDigits: d
+    }
+  );
+}
+
+
+function fPrice(x) {
+
+  if (
+    x === null ||
+    x === undefined ||
+    !Number.isFinite(Number(x))
+  ) {
+    return "—";
+  }
+
+  const v = Number(x);
+
+  if (v === 0) {
+    return "—";
+  }
+
+  return v.toLocaleString(
+    undefined,
+    {
+      maximumFractionDigits: 10
+    }
+  );
+}
+
+
+function fPct(x) {
+
+  if (
+    x === null ||
+    x === undefined ||
+    !Number.isFinite(Number(x))
+  ) {
+    return "—";
+  }
+
+  return (
+    Number(x).toLocaleString(
+      undefined,
+      {
+        maximumFractionDigits: 2
+      }
+    ) + "%"
+  );
+}
+
+
+function sigClass(s) {
+
+  if (s === "BUY") return "buy";
+
+  if (s === "SELL") return "sell";
+
+  return "neutral";
+}
+
+
+function signalEmoji(s) {
+
+  if (s === "BUY") return "🟢";
+
+  if (s === "SELL") return "🔴";
+
+  return "⚪";
+}
+
+
+function haText(ha) {
+
+  if (!ha) return "—";
+
+  if (ha.bull) {
+    return "▲ Bull";
+  }
+
+  if (ha.bear) {
+    return "▼ Bear";
+  }
+
+  return "—";
+}
+
+
+/* ============================================================
+   SEARCH / FILTER
+============================================================ */
+
+let currentFilter = "ALL";
+let currentSearch = "";
+
+
+function setFilter(filter) {
+
+  currentFilter = filter;
+
+  document.querySelectorAll(
+    ".signal-filter"
+  ).forEach(btn => {
+
+    btn.classList.toggle(
+      "active",
+      btn.dataset.filter === filter
+    );
+
+  });
+
+  renderLast();
+}
+
+
+function applySearch(value) {
+
+  currentSearch =
+    String(value || "")
       .trim()
       .toUpperCase();
 
-  return markets.filter(m => {
-
-    const x =
-      m.indicators || {};
-
-    const signal =
-      getSignal(x);
-
-    const symbol =
-      String(
-        m.symbol || ""
-      ).toUpperCase();
-
-    const matchesSearch =
-      !term ||
-      symbol.includes(term);
-
-    const matchesSignal =
-      currentFilter === "ALL" ||
-      signal === currentFilter;
-
-    return (
-      matchesSearch &&
-      matchesSignal
-    );
-
-  });
+  renderLast();
 }
 
-/* =========================================================
-   SORT
-   ========================================================= */
 
-function sortMarkets(markets){
+/* ============================================================
+   SAFE S/R
+============================================================ */
 
-  return [...markets].sort(
-    (a,b) => {
+function safeSR(value) {
 
-      const sa =
-        safeNumber(
-          a.indicators?.score
-        );
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(Number(value))
+  ) {
+    return null;
+  }
 
-      const sb =
-        safeNumber(
-          b.indicators?.score
-        );
+  const v = Number(value);
 
-      return (
-        (sb ?? -1) -
-        (sa ?? -1)
-      );
+  if (v <= 0) {
+    return null;
+  }
 
-    }
+  return v;
+}
+
+
+/* ============================================================
+   RENDER
+============================================================ */
+
+let lastJSON = null;
+
+
+function render(j) {
+
+  if (!j) return;
+
+  lastJSON = j;
+
+  const status = j.status || {};
+  const settings = j.settings || {};
+  const allMarkets = Array.isArray(j.markets)
+    ? j.markets
+    : [];
+
+  $("coins").textContent =
+    status.coins ?? allMarkets.length;
+
+  $("scan").textContent =
+    status.last_scan
+      ? new Date(
+          status.last_scan * 1000
+        ).toLocaleTimeString()
+      : "—";
+
+  $("wave").textContent =
+    settings.wave_tf || "—";
+
+  $("tide").textContent =
+    settings.tide_tf || "—";
+
+  $("dot").className =
+    "dot " +
+    (
+      status.ws_connected
+        ? "ok"
+        : ""
+    );
+
+  $("st").textContent =
+    status.ws_connected
+      ? "Delta WS connected"
+      : "Reconnecting";
+
+  renderMarkets(
+    allMarkets,
+    settings
   );
 }
 
-/* =========================================================
-   RENDER TABLE
-   ========================================================= */
 
-function renderTable(){
+/* ============================================================
+   MARKET TABLE
+============================================================ */
 
-  if(rendering){
-    return;
-  }
+function renderMarkets(
+  marketsList,
+  settings
+) {
 
-  rendering = true;
+  let rows = [
+    ...marketsList
+  ];
 
-  try{
+  /* Search */
 
-    const rows =
-      $("rows");
+  if (currentSearch) {
 
-    if(!rows){
-      return;
-    }
-
-    const markets =
-      Array.isArray(
-        scannerData.markets
+    rows = rows.filter(m =>
+      String(
+        m.symbol || ""
       )
-        ? scannerData.markets
-        : [];
-
-    let filtered =
-      applyFilters(markets);
-
-    filtered =
-      sortMarkets(filtered);
-
-    if(!filtered.length){
-
-      rows.innerHTML = `
-        <tr>
-          <td
-            colspan="28"
-            class="empty">
-            No markets match the current filter.
-          </td>
-        </tr>
-      `;
-
-      return;
-    }
-
-    rows.innerHTML =
-      filtered
-        .map(
-          (m,i) =>
-            makeRow(m,i)
-        )
-        .join("");
-
-  }finally{
-
-    rendering = false;
-
-  }
-}
-
-/* =========================================================
-   MAIN RENDER
-   ========================================================= */
-
-function render(j){
-
-  if(!j){
-    return;
-  }
-
-  scannerData =
-    j;
-
-  updateHeader();
-
-  renderTable();
-}
-
-/* =========================================================
-   HEADER
-   ========================================================= */
-
-function updateHeader(){
-
-  const status =
-    scannerData.status || {};
-
-  const settings =
-    scannerData.settings || {};
-
-  if($("coins")){
-    $("coins").textContent =
-      Number(
-        status.coins || 0
-      ).toLocaleString();
-  }
-
-  if($("scan")){
-
-    $("scan").textContent =
-      status.last_scan
-        ? new Date(
-            status.last_scan * 1000
-          ).toLocaleTimeString()
-        : "—";
-  }
-
-  if($("wave")){
-    $("wave").textContent =
-      settings.wave_tf || "—";
-  }
-
-  if($("tide")){
-    $("tide").textContent =
-      settings.tide_tf || "—";
-  }
-
-  const connected =
-    Boolean(
-      status.ws_connected
+      .toUpperCase()
+      .includes(currentSearch)
     );
-
-  const dot =
-    $("dot");
-
-  if(dot){
-
-    dot.className =
-      "dot " +
-      (
-        connected
-          ? "ok"
-          : ""
-      );
-
   }
 
-  if($("st")){
 
-    $("st").textContent =
-      connected
-        ? "Delta WS connected"
-        : "Reconnecting...";
+  /* Signal filter */
+
+  if (currentFilter !== "ALL") {
+
+    rows = rows.filter(m => {
+
+      const signal =
+        m.indicators?.signal ||
+        "NEUTRAL";
+
+      return signal === currentFilter;
+    });
+  }
+
+
+  /* Score sorting */
+
+  rows.sort(
+    (a,b) =>
+      (
+        b.indicators?.score ?? -1
+      )
+      -
+      (
+        a.indicators?.score ?? -1
+      )
+  );
+
+
+  $("rows").innerHTML =
+    rows.map(
+      (m,i) => {
+
+        const x =
+          m.indicators || {};
+
+        const w =
+          x.wave || {};
+
+        const t =
+          x.tide || {};
+
+        const ha =
+          x.ha || {};
+
+        const sr =
+          x.sr || {};
+
+        const p =
+          x.plan || {};
+
+        const signal =
+          x.signal || "NEUTRAL";
+
+
+        /* ----------------------------------------------------
+           IMPORTANT FIX:
+           MACD/STOCHASTIC ARE INSIDE x.wave
+        ---------------------------------------------------- */
+
+        const macdValue =
+          w.macd;
+
+        const macdSignal =
+          w.macd_signal;
+
+        const stochK =
+          w.stoch_k;
+
+        const stochD =
+          w.stoch_d;
+
+
+        /* ----------------------------------------------------
+           Confirmations
+        ---------------------------------------------------- */
+
+        const conf =
+          signal === "BUY"
+            ? (
+                x.buy_confirmations ?? 0
+              )
+            : signal === "SELL"
+              ? (
+                  x.sell_confirmations ?? 0
+                )
+              : Math.max(
+                  x.buy_confirmations ?? 0,
+                  x.sell_confirmations ?? 0
+                );
+
+
+        /* ----------------------------------------------------
+           S/R
+        ---------------------------------------------------- */
+
+        const s1 = safeSR(sr.s1);
+        const s2 = safeSR(sr.s2);
+        const r1 = safeSR(sr.r1);
+        const r2 = safeSR(sr.r2);
+
+
+        /* ----------------------------------------------------
+           Trade plan
+        ---------------------------------------------------- */
+
+        const hasPlan =
+          signal === "BUY" ||
+          signal === "SELL";
+
+
+        const rr =
+          hasPlan &&
+          Number.isFinite(
+            Number(p.rr)
+          )
+            ? Number(p.rr)
+            : null;
+
+
+        return `
+          <tr>
+
+            <td>${i + 1}</td>
+
+            <td>
+              <b>${m.symbol || "—"}</b>
+            </td>
+
+            <td>
+              ${fPrice(m.price)}
+            </td>
+
+            <td>
+              ${fPct(m.change)}
+            </td>
+
+            <td>
+              ${f(m.volume,0)}
+            </td>
+
+            <td>
+              ${m.volume_rank ?? "—"}
+            </td>
+
+            <td>
+              ${f(m.oi,0)}
+            </td>
+
+            <td>
+              ${settings.wave_tf || "—"}
+            </td>
+
+            <td>
+              ${settings.tide_tf || "—"}
+            </td>
+
+            <td>
+              ${f(x.tide9,8)}
+            </td>
+
+            <td>
+              ${f(x.tide20,8)}
+            </td>
+
+            <td>
+              ${f(w.rsi,2)}
+            </td>
+
+            <td>
+              ${f(macdValue,8)}
+              /
+              ${f(macdSignal,8)}
+            </td>
+
+            <td>
+              ${f(stochK,2)}
+              /
+              ${f(stochD,2)}
+            </td>
+
+            <td>
+              <b>${x.score ?? "—"}</b>
+            </td>
+
+            <td>
+              ${x.score_rank ?? "—"}
+            </td>
+
+            <td class="${sigClass(signal)}">
+              <b>
+                ${signalEmoji(signal)}
+                ${signal}
+              </b>
+            </td>
+
+            <td>
+              <b>${conf}/8</b>
+            </td>
+
+            <td>
+              ${haText(ha)}
+            </td>
+
+            <td>
+              ${fPrice(s2)}
+            </td>
+
+            <td>
+              ${fPrice(s1)}
+            </td>
+
+            <td>
+              ${fPrice(r1)}
+            </td>
+
+            <td>
+              ${fPrice(r2)}
+            </td>
+
+            <td>
+              ${hasPlan ? fPrice(p.entry) : "—"}
+            </td>
+
+            <td>
+              ${hasPlan ? fPrice(p.sl) : "—"}
+            </td>
+
+            <td>
+              ${hasPlan ? fPrice(p.tp1) : "—"}
+            </td>
+
+            <td>
+              ${hasPlan ? fPrice(p.tp2) : "—"}
+            </td>
+
+            <td>
+              ${
+                rr !== null
+                  ? "1:" + rr.toFixed(2)
+                  : "—"
+              }
+            </td>
+
+          </tr>
+        `;
+      }
+    ).join("");
+
+
+  if (!rows.length) {
+
+    $("rows").innerHTML = `
+      <tr>
+        <td
+          colspan="28"
+          style="
+            text-align:center;
+            padding:30px;
+            color:#8da0ae;
+          "
+        >
+          No markets match the current filter.
+        </td>
+      </tr>
+    `;
   }
 }
 
-/* =========================================================
-   LOAD INITIAL STATUS
-   ========================================================= */
 
-async function loadStatus(){
+function renderLast() {
 
-  try{
+  if (!lastJSON) return;
 
-    const response =
+  renderMarkets(
+    Array.isArray(lastJSON.markets)
+      ? lastJSON.markets
+      : [],
+    lastJSON.settings || {}
+  );
+}
+
+
+/* ============================================================
+   INITIAL STATUS
+============================================================ */
+
+async function loadInitial() {
+
+  try {
+
+    const r =
       await fetch(
         "/api/status",
         {
-          cache:"no-store"
+          cache: "no-store"
         }
       );
 
-    if(!response.ok){
+    const j =
+      await r.json();
 
-      throw new Error(
-        "HTTP " +
-        response.status
-      );
+    fill(j.settings);
 
-    }
+    render(j);
 
-    const data =
-      await response.json();
-
-    fill(data.settings);
-
-    render(data);
-
-  }catch(error){
+  } catch (e) {
 
     console.error(
       "Initial status error:",
-      error
+      e
     );
 
-    if($("st")){
-      $("st").textContent =
-        "Backend connection error";
-    }
-
+    $("st").textContent =
+      "API connection failed";
   }
 }
 
-/* =========================================================
+
+/* ============================================================
    WEBSOCKET
-   ========================================================= */
+============================================================ */
 
-function connect(){
-
-  if(socket){
-
-    try{
-      socket.close();
-    }catch(e){}
-
-  }
+function connect() {
 
   const protocol =
     location.protocol === "https:"
       ? "wss"
       : "ws";
 
-  const url =
-    protocol +
-    "://" +
-    location.host +
-    "/ws";
-
-  socket =
-    new WebSocket(url);
-
-  socket.onopen = () => {
-
-    console.log(
-      "Delta Cloud Scanner WebSocket connected"
+  const ws =
+    new WebSocket(
+      protocol +
+      "://" +
+      location.host +
+      "/ws"
     );
 
-    if($("st")){
-      $("st").textContent =
-        "Delta WS connected";
-    }
 
-    if($("dot")){
-      $("dot").className =
-        "dot ok";
-    }
+  ws.onopen = () => {
 
+    $("st").textContent =
+      "Delta WS connected";
+
+    $("dot").className =
+      "dot ok";
   };
 
-  socket.onmessage = event => {
 
-    try{
+  ws.onmessage = event => {
 
-      const data =
+    try {
+
+      const j =
         JSON.parse(
           event.data
         );
 
-      /*
-       * Update the state first.
-       * Then redraw the table once.
-       */
+      render(j);
 
-      scannerData =
-        data;
-
-      updateHeader();
-
-      renderTable();
-
-    }catch(error){
+    } catch (e) {
 
       console.error(
-        "WebSocket JSON error:",
-        error
+        "WS JSON error:",
+        e
       );
-
     }
+  };
+
+
+  ws.onerror = () => {
+
+    try {
+      ws.close();
+    } catch (_) {}
 
   };
 
-  socket.onerror = error => {
 
-    console.warn(
-      "WebSocket error",
-      error
-    );
+  ws.onclose = () => {
 
-    try{
-      socket.close();
-    }catch(e){}
+    $("dot").className =
+      "dot";
 
-  };
+    $("st").textContent =
+      "Reconnecting...";
 
-  socket.onclose = () => {
-
-    if($("st")){
-      $("st").textContent =
-        "Reconnecting...";
-    }
-
-    if($("dot")){
-      $("dot").className =
-        "dot";
-    }
-
-    clearTimeout(
-      reconnectTimer
-    );
-
-    reconnectTimer =
-      setTimeout(
-        connect,
-        3000
-      );
-
-  };
-}
-
-/* =========================================================
-   SEARCH
-   ========================================================= */
-
-function setupSearch(){
-
-  const input =
-    $("searchInput");
-
-  if(!input){
-    return;
-  }
-
-  input.addEventListener(
-    "input",
-    event => {
-
-      searchTerm =
-        event.target.value;
-
-      renderTable();
-
-    }
-  );
-
-}
-
-/* =========================================================
-   KEYBOARD SHORTCUT
-   ========================================================= */
-
-function setupKeyboard(){
-
-  document.addEventListener(
-    "keydown",
-    event => {
-
-      if(
-        event.key === "/" &&
-        document.activeElement?.tagName !== "INPUT" &&
-        document.activeElement?.tagName !== "SELECT"
-      ){
-
-        event.preventDefault();
-
-        const input =
-          $("searchInput");
-
-        if(input){
-          input.focus();
-        }
-
-      }
-
-      if(
-        event.key === "Escape"
-      ){
-
-        const input =
-          $("searchInput");
-
-        if(input){
-          input.value = "";
-          searchTerm = "";
-          renderTable();
-        }
-
-      }
-
-    }
-  );
-
-}
-
-/* =========================================================
-   MESSAGE
-   ========================================================= */
-
-let messageTimer = null;
-
-function showMessage(message){
-
-  const el =
-    $("msg");
-
-  if(!el){
-    return;
-  }
-
-  el.textContent =
-    message;
-
-  clearTimeout(
-    messageTimer
-  );
-
-  messageTimer =
     setTimeout(
-      () => {
-        el.textContent = "";
-      },
-      4000
+      connect,
+      3000
     );
-
+  };
 }
 
-/* =========================================================
-   START APPLICATION
-   ========================================================= */
 
-document.addEventListener(
-  "DOMContentLoaded",
-  async () => {
+/* ============================================================
+   START
+============================================================ */
 
-    buildSettings();
+loadInitial();
 
-    setupSearch();
-
-    setupKeyboard();
-
-    updateFilterButtons();
-
-    await loadStatus();
-
-    connect();
-
-  }
-);
+connect();
