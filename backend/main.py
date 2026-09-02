@@ -56,7 +56,12 @@ print("ROOT:", ROOT)
 print("FRONTEND:", ROOT / "frontend")
 print("INDEX EXISTS:", (ROOT / "frontend" / "index.html").exists())
 
+print("=== DIRECTORY DEBUG ===")
+print("ROOT CONTENTS:", list(ROOT.iterdir()))
+print("FRONTEND EXISTS:", (ROOT / "frontend").exists())
 
+if (ROOT / "frontend").exists():
+    print("FRONTEND CONTENTS:", list((ROOT / "frontend").iterdir()))
 # ============================================================
 # FASTAPI
 # ============================================================
