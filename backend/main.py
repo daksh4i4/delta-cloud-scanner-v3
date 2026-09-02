@@ -3164,33 +3164,69 @@ async def shutdown():
 @app.get("/")
 async def root():
 
-    index = (
-        ROOT
-        / "frontend"
-        / "index.html"
-    )
+    index = ROOT / "frontend" / "index.html"
+
+    print("FRONTEND REQUEST:")
+    print("ROOT:", ROOT)
+    print("INDEX:", index)
+    print("INDEX EXISTS:", index.exists())
 
     if index.exists():
 
         return FileResponse(
-            index
+            index,
+            media_type="text/html"
         )
 
     return {
-        "ok": True,
-        "service":
-            "Delta Cloud Scanner V3.2",
-        "message":
-            "Backend is running."
+        "ok": False,
+        "service": "Delta Cloud Scanner V3.2",
+        "error": "frontend/index.html not found",
+        "root": str(ROOT),
+        "frontend_path": str(ROOT / "frontend"),
+        "index_path": str(index),
     }
 
 
 @app.head("/")
 async def root_head():
 
+    index = ROOT / "frontend" / "index.html"
+
+    if index.exists():
+        return FileResponse(
+            index,
+            media_type="text/html"
+        )
+
     return None
 
 
+# ============================================================
+# FRONTEND JAVASCRIPT
+# ============================================================
+
+@app.get("/app.js")
+async def serve_app_js():
+
+    app_js = ROOT / "frontend" / "app.js"
+
+    print("APP.JS REQUEST:")
+    print("APP.JS:", app_js)
+    print("APP.JS EXISTS:", app_js.exists())
+
+    if app_js.exists():
+
+        return FileResponse(
+            app_js,
+            media_type="application/javascript"
+        )
+
+    return {
+        "ok": False,
+        "error": "frontend/app.js not found",
+        "path": str(app_js),
+    }
 # ============================================================
 # SIMPLE RENDER HEALTH / PING
 # ============================================================
