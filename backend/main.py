@@ -551,29 +551,47 @@ def heikin_ashi(candles):
 # SUPPORT / RESISTANCE
 # ============================================================
 
-def pivot_levels(
-    candles,
-    lookback,
-    pivot
-):
+def pivot_levels(candles, lookback, pivot):
 
     try:
-
         lb = int(lookback)
         p = int(pivot)
-
     except Exception:
+        return [], []
 
-        return []
+    if lb <= 0 or p <= 0:
+        return [], []
+
+    valid = []
+
+    for c in candles:
+
+        try:
+            h = float(c.get("high"))
+            l = float(c.get("low"))
+
+            if (
+                not math.isfinite(h)
+                or not math.isfinite(l)
+                or h <= 0
+                or l <= 0
+                or h < l
+            ):
+                continue
+
+            valid.append(c)
+
+        except Exception:
+            continue
 
     data = (
-        candles[-lb:]
-        if len(candles) > lb
-        else candles[:]
+        valid[-lb:]
+        if len(valid) > lb
+        else valid
     )
 
-    if len(data) < 2 * p + 1:
-        return []
+    if len(data) < (2 * p + 1):
+        return [], []
 
     lows = []
     highs = []
@@ -583,51 +601,70 @@ def pivot_levels(
         len(data) - p
     ):
 
-        lo = num(
-            data[i].get("low")
+        current_low = num(
+            data[i].get("low"),
+            0
         )
 
-        hi = num(
-            data[i].get("high")
+        current_high = num(
+            data[i].get("high"),
+            0
         )
 
         low_window = [
-            num(x.get("low"))
+            num(
+                x.get("low"),
+                0
+            )
             for x in data[
-                i - p:
-                i + p + 1
+                i - p:i + p + 1
             ]
         ]
 
         high_window = [
-            num(x.get("high"))
+            num(
+                x.get("high"),
+                0
+            )
             for x in data[
-                i - p:
-                i + p + 1
+                i - p:i + p + 1
             ]
         ]
 
-        if lo == min(low_window):
-            lows.append(lo)
+        if (
+            current_low > 0
+            and current_low == min(low_window)
+        ):
+            lows.append(
+                current_low
+            )
 
-        if hi == max(high_window):
-            highs.append(hi)
+        if (
+            current_high > 0
+            and current_high == max(high_window)
+        ):
+            highs.append(
+                current_high
+            )
 
     return lows, highs
+def sr_levels(candles, price):
 
+    try:
+        price = float(price)
 
-def sr_levels(
-    candles,
-    price
-):
+        if (
+            not math.isfinite(price)
+            or price <= 0
+        ):
+            return {
+                "s1": None,
+                "s2": None,
+                "r1": None,
+                "r2": None,
+            }
 
-    piv = pivot_levels(
-        candles,
-        settings["sr_lookback"],
-        settings["sr_pivot"]
-    )
-
-    if not piv:
+    except Exception:
 
         return {
             "s1": None,
@@ -636,22 +673,28 @@ def sr_levels(
             "r2": None,
         }
 
-    lows, highs = piv
+    lows, highs = pivot_levels(
+        candles,
+        settings["sr_lookback"],
+        settings["sr_pivot"]
+    )
 
     supports = sorted(
         {
-            x
+            float(x)
             for x in lows
-            if x < price
+            if x > 0
+            and x < price
         },
         reverse=True
     )
 
     resistances = sorted(
         {
-            x
+            float(x)
             for x in highs
-            if x > price
+            if x > 0
+            and x > price
         }
     )
 
@@ -659,26 +702,24 @@ def sr_levels(
 
         "s1":
             supports[0]
-            if len(supports) > 0
+            if len(supports) >= 1
             else None,
 
         "s2":
             supports[1]
-            if len(supports) > 1
+            if len(supports) >= 2
             else None,
 
         "r1":
             resistances[0]
-            if len(resistances) > 0
+            if len(resistances) >= 1
             else None,
 
         "r2":
             resistances[1]
-            if len(resistances) > 1
+            if len(resistances) >= 2
             else None,
     }
-
-
 # ============================================================
 # CANDLE ANALYSIS
 # ============================================================
